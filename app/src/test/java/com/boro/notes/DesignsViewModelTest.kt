@@ -212,6 +212,22 @@ class DesignsViewModelTest {
     }
 
     @Test
+    fun blankDesignIsDiscardedOnClose() = runTest(dispatcher) {
+        vm.createDesign()
+        advanceUntilIdle()
+        vm.close()
+        advanceUntilIdle()
+        assertTrue(designs.designs.value.isEmpty())
+
+        vm.createDesign()
+        advanceUntilIdle()
+        vm.addStroke(listOf(Pt(0f, 0f), Pt(3f, 0f)))
+        vm.close()
+        advanceUntilIdle()
+        assertEquals(1, designs.designs.value.size)
+    }
+
+    @Test
     fun stagesAdvanceToDone() = runTest(dispatcher) {
         vm.createDesign()
         advanceUntilIdle()

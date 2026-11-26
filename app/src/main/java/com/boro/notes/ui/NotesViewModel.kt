@@ -68,7 +68,7 @@ class NotesViewModel(
 
     fun open(id: Long) {
         if (_editor.value?.id == id) return
-        flush()
+        leaveCurrent()
         viewModelScope.launch {
             val note = repository.get(id) ?: return@launch
             setEditor(EditorState(note.id, note.title, note.body))
@@ -76,7 +76,7 @@ class NotesViewModel(
     }
 
     fun createNote() {
-        flush()
+        leaveCurrent()
         viewModelScope.launch {
             val id = repository.create()
             setEditor(EditorState(id, "", ""))
@@ -84,7 +84,7 @@ class NotesViewModel(
     }
 
     fun close() {
-        flush()
+        leaveCurrent()
         _fullScreen.value = false
         clearOpen()
     }
@@ -102,6 +102,18 @@ class NotesViewModel(
     fun onBodyChange(value: String) = edit { it.copy(body = value) }
 
     /** Writes pending edits immediately (on close, switching notes, or the app going to the background). */
+    /** Saves the open note, or deletes it if it was left completely blank, to keep the list tidy. */
+    private fun leaveCurrent() {
+        val current = _editor.value ?: return
+        if (current.title.isBlank() && current.body.isBlank()) {
+            saveJob?.cancel()
+            saveJob = null
+            viewModelScope.launch { repository.delete(current.id) }
+        } else {
+            flush()
+        }
+    }
+
     fun flush() {
         val current = _editor.value ?: return
         saveJob?.cancel()

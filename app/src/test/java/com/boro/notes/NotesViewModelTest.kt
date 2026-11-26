@@ -77,6 +77,24 @@ class NotesViewModelTest {
     }
 
     @Test
+    fun blankNoteIsDiscardedOnClose() = runTest(dispatcher) {
+        val repo = FakeNoteRepository()
+        val vm = NotesViewModel(repo, SavedStateHandle())
+        vm.createNote()
+        advanceUntilIdle()
+        vm.close()
+        advanceUntilIdle()
+        assertEquals(0, repo.notes.value.size)
+
+        vm.createNote()
+        advanceUntilIdle()
+        vm.onBodyChange("keep me")
+        vm.close()
+        advanceUntilIdle()
+        assertEquals(1, repo.notes.value.size)
+    }
+
+    @Test
     fun searchFiltersByTitleAndBody() = runTest(dispatcher) {
         val repo = FakeNoteRepository(
             listOf(

@@ -107,7 +107,7 @@ class DesignsViewModel(
     }
 
     fun createDesign(preset: Preset = Preset.BLANK) {
-        flush()
+        leaveCurrent()
         viewModelScope.launch {
             val id = designs.create()
             if (preset != Preset.BLANK) {
@@ -120,12 +120,12 @@ class DesignsViewModel(
 
     fun open(id: Long) {
         if (_sketch.value?.id == id) return
-        flush()
+        leaveCurrent()
         viewModelScope.launch { load(id) }
     }
 
     fun close() {
-        flush()
+        leaveCurrent()
         _sketch.value = null
         undoStack.clear()
         redoStack.clear()
@@ -490,8 +490,25 @@ class DesignsViewModel(
         viewModelScope.launch { persist(current) }
     }
 
+    /** Saves the open design, or deletes it if nothing was drawn, named or linked. */
+    private fun leaveCurrent() {
+        val current = _sketch.value ?: return
+        if (current.name.isBlank() && current.shapes.isEmpty() && current.noteId == null && current.stage == Stage.IDEA) {
+            saveJob?.cancel()
+            saveJob = null
+            viewModelScope.launch { designs.delete(current.id) }
+        } else {
+            flush()
+        }
+    }
+
     private suspend fun load(id: Long) {
-        val design = designs.get(id) ?: return
+        var design = designs.get(id) ?: return
+        // A linked note that was deleted (e.g. left blank) shouldn't leave a dangling link.
+        if (design.noteId != null && notes.get(design.noteId!!) == null) {
+            designs.update(id) { it.copy(noteId = null) }
+            design = design.copy(noteId = null)
+        }
         undoStack.clear()
         redoStack.clear()
         _sketch.value = SketchState(
