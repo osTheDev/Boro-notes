@@ -31,6 +31,7 @@ enum class Tool(val label: String) {
     LINE("Line"),
     BOX("Box"),
     OVAL("Oval"),
+    POINTS("Points"),
     FILL("Fill"),
     ERASE("Erase"),
 }
@@ -47,6 +48,9 @@ data class SketchState(
     val fillColor: Int? = FILL_COLORS[1],
     val canUndo: Boolean = false,
     val canRedo: Boolean = false,
+    /** Points tool: the shape being edited and its selected point. */
+    val selectedShape: Int? = null,
+    val selectedPoint: Int? = null,
 )
 
 /** Fill swatches; null clears a fill. */
@@ -127,7 +131,9 @@ class DesignsViewModel(
 
     fun rename(name: String) = updateOpen(persist = false) { it.copy(name = name) }.also { scheduleSave() }
 
-    fun setTool(tool: Tool) = updateOpen(persist = false) { it.copy(tool = tool) }
+    fun setTool(tool: Tool) = updateOpen(persist = false) {
+        it.copy(tool = tool, selectedShape = null, selectedPoint = null)
+    }
 
     fun setFillColor(color: Int?) = updateOpen(persist = false) { it.copy(fillColor = color, tool = Tool.FILL) }
 
@@ -150,7 +156,7 @@ class DesignsViewModel(
             Tool.LINE -> Geometry.line(from, to, current.shapes, current.options)
             Tool.BOX -> Geometry.box(from, to, current.shapes, current.options)
             Tool.OVAL -> Geometry.oval(from, to, current.options)
-            Tool.FILL, Tool.ERASE -> null
+            Tool.POINTS, Tool.FILL, Tool.ERASE -> null
         }
     }
 
@@ -166,16 +172,126 @@ class DesignsViewModel(
         val current = _sketch.value ?: return
         when (current.tool) {
             Tool.DRAW, Tool.LINE, Tool.BOX, Tool.OVAL -> Unit
-            Tool.FILL -> {
-                val index = Geometry.fillTarget(current.shapes, at) ?: return
-                if (current.shapes[index].fill == current.fillColor) return
-                commitShapes(current.shapes.toMutableList().also {
-                    it[index] = it[index].copy(fill = current.fillColor)
-                })
-            }
+            Tool.POINTS -> pointsTap(at, tolerance)
+            Tool.FILL -> fillAt(at)
             Tool.ERASE -> {
                 val index = Geometry.hitTarget(current.shapes, at, tolerance) ?: return
                 commitShapes(current.shapes.filterIndexed { i, _ -> i != index })
+            }
+        }
+    }
+
+    // --- Points tool ---
+
+    private var dragging = false
+
+    private fun selected(): Shape? = _sketch.value?.let { s -> s.selectedShape?.let { s.shapes.getOrNull(it) } }
+
+    /** The point of the selected shape under the finger, if any; [tolerance] is in grid units. */
+    fun handleAt(at: Pt, tolerance: Float): Int? = selected()?.let { Geometry.pointAt(it, at, tolerance) }
+
+    /** Moves a point of the selected shape while the finger drags it. */
+    fun dragHandle(index: Int, to: Pt) {
+        val current = _sketch.value ?: return
+        val shapeIndex = current.selectedShape ?: return
+        val shape = current.shapes.getOrNull(shapeIndex) ?: return
+        if (index !in shape.points.indices) return
+        if (!dragging) {
+            dragging = true
+            undoStack.addLast(current.shapes)
+            redoStack.clear()
+        }
+        val target = if (current.options.snapToGrid) Geometry.snap(to) else to
+        val moved = shape.copy(points = shape.points.toMutableList().also { it[index] = target })
+        _sketch.value = current.copy(
+            shapes = current.shapes.toMutableList().also { it[shapeIndex] = moved },
+            selectedPoint = index,
+            canUndo = true,
+            canRedo = false,
+        )
+    }
+
+    fun endHandleDrag() {
+        dragging = false
+        scheduleSave()
+    }
+
+    /** Points tool tap: pick a point, add a point on the selected line, or select another line. */
+    private fun pointsTap(at: Pt, tolerance: Float) {
+        val current = _sketch.value ?: return
+        val shape = selected()
+        if (shape != null) {
+            Geometry.pointAt(shape, at, tolerance)?.let { index ->
+                _sketch.value = current.copy(selectedPoint = index)
+                return
+            }
+            if (Geometry.distance(shape, at) <= tolerance) {
+                val insertAt = Geometry.nearestSegment(shape, at) + 1
+                val point = if (current.options.snapToGrid) Geometry.snap(at) else at
+                val updated = shape.copy(
+                    points = shape.points.toMutableList().also { it.add(insertAt, point) },
+                    corners = shape.corners.toMutableList().also { it.add(insertAt, false) },
+                )
+                commitShapes(current.shapes.toMutableList().also { it[current.selectedShape!!] = updated })
+                _sketch.value = _sketch.value?.copy(selectedPoint = insertAt)
+                return
+            }
+        }
+        val hit = Geometry.hitTarget(current.shapes, at, tolerance)?.takeIf { current.shapes[it].stroke }
+        _sketch.value = current.copy(selectedShape = hit, selectedPoint = null)
+    }
+
+    fun deleteSelectedPoint() {
+        val current = _sketch.value ?: return
+        val shapeIndex = current.selectedShape ?: return
+        val index = current.selectedPoint ?: return
+        val shape = current.shapes.getOrNull(shapeIndex) ?: return
+        if (shape.points.size <= if (shape.closed) 3 else 2) return
+        val updated = shape.copy(
+            points = shape.points.filterIndexed { i, _ -> i != index },
+            corners = shape.corners.filterIndexed { i, _ -> i != index },
+        )
+        commitShapes(current.shapes.toMutableList().also { it[shapeIndex] = updated })
+        _sketch.value = _sketch.value?.copy(selectedPoint = null)
+    }
+
+    /** Switches the selected point between a sharp corner and a smooth curve. */
+    fun toggleSelectedCorner() {
+        val current = _sketch.value ?: return
+        val shapeIndex = current.selectedShape ?: return
+        val index = current.selectedPoint ?: return
+        val shape = current.shapes.getOrNull(shapeIndex) ?: return
+        val updated = shape.copy(corners = shape.corners.toMutableList().also { it[index] = !it[index] })
+        commitShapes(current.shapes.toMutableList().also { it[shapeIndex] = updated })
+    }
+
+    /**
+     * Fills the innermost area around [at]: a closed shape, or an area closed off by separate
+     * lines meeting end to end (stored as a fill-only region under the lines).
+     */
+    private fun fillAt(at: Pt) {
+        val current = _sketch.value ?: return
+        val shapes = current.shapes
+        val index = Geometry.fillTarget(shapes, at)
+        val region = Geometry.enclosedRegion(shapes, at)
+        val regionWins = region != null &&
+            (index == null || Geometry.polygonArea(region) < Geometry.area(shapes[index]))
+        when {
+            regionWins -> {
+                val color = current.fillColor ?: return
+                val fillShape = Shape(region!!, List(region.size) { true }, closed = true, fill = color, stroke = false)
+                commitShapes(listOf(fillShape) + shapes)
+            }
+            index != null -> {
+                val target = shapes[index]
+                if (target.fill == current.fillColor) return
+                commitShapes(
+                    if (!target.stroke && current.fillColor == null) {
+                        shapes.filterIndexed { i, _ -> i != index }
+                    } else {
+                        shapes.toMutableList().also { it[index] = target.copy(fill = current.fillColor) }
+                    }
+                )
             }
         }
     }
@@ -185,6 +301,7 @@ class DesignsViewModel(
         val previous = undoStack.removeLastOrNull() ?: return
         redoStack.addLast(current.shapes)
         setShapes(previous)
+        clearSelection()
     }
 
     fun redo() {
@@ -192,6 +309,7 @@ class DesignsViewModel(
         val next = redoStack.removeLastOrNull() ?: return
         undoStack.addLast(current.shapes)
         setShapes(next)
+        clearSelection()
     }
 
     fun clearCanvas() {
@@ -232,6 +350,10 @@ class DesignsViewModel(
             shapes = SketchCodec.decode(design.shapes),
         )
         savedState[KEY_OPEN_ID] = design.id
+    }
+
+    private fun clearSelection() {
+        _sketch.value = _sketch.value?.copy(selectedShape = null, selectedPoint = null)
     }
 
     private fun commitShapes(shapes: List<Shape>) {

@@ -121,6 +121,31 @@ class GeometryTest {
     }
 
     @Test
+    fun findsPointAndNearestSegment() {
+        val box = Geometry.box(Pt(0f, 0f), Pt(4f, 4f), emptyList(), defaults)!!
+        assertEquals(2, Geometry.pointAt(box, Pt(4.2f, 3.9f), 0.5f))
+        assertNull(Geometry.pointAt(box, Pt(2f, 2f), 0.5f))
+        assertEquals(1, Geometry.nearestSegment(box, Pt(4.1f, 2f))) // right edge
+        assertEquals(3, Geometry.nearestSegment(box, Pt(-0.1f, 2f))) // left edge, closing segment
+    }
+
+    @Test
+    fun separateLinesThatMeetEnclosePlaceToFill() {
+        val line = { a: Pt, b: Pt -> Geometry.line(a, b, emptyList(), defaults)!! }
+        // A triangle made of three separate lines, plus a stray line that doesn't close anything.
+        val shapes = listOf(
+            line(Pt(0f, 0f), Pt(6f, 0f)),
+            line(Pt(6f, 0f), Pt(3f, 5f)),
+            line(Pt(0f, 0f), Pt(3f, 5f)), // drawn the other way round
+            line(Pt(6f, 0f), Pt(10f, 0f)),
+        )
+        val region = Geometry.enclosedRegion(shapes, Pt(3f, 1f))!!
+        assertEquals(15f, Geometry.polygonArea(region), 0.01f)
+        assertNull(Geometry.enclosedRegion(shapes, Pt(8f, 1f)))
+        assertNull(Geometry.enclosedRegion(shapes.take(2), Pt(3f, 1f)))
+    }
+
+    @Test
     fun flatBoxIsIgnored() {
         assertNull(Geometry.box(Pt(1f, 1f), Pt(5f, 1.2f), emptyList(), defaults))
     }

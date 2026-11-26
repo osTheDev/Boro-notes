@@ -93,6 +93,76 @@ class DesignsViewModelTest {
     }
 
     @Test
+    fun pointsToolAddsDragsTogglesAndDeletesPoints() = runTest(dispatcher) {
+        vm.createDesign()
+        advanceUntilIdle()
+        vm.setTool(Tool.BOX)
+        vm.addStroke(listOf(Pt(0f, 0f), Pt(4f, 4f)))
+        vm.setTool(Tool.POINTS)
+
+        vm.tap(Pt(4.1f, 2f), 0.5f) // select the box
+        assertEquals(0, vm.sketch.value!!.selectedShape)
+
+        vm.tap(Pt(4.1f, 2f), 0.5f) // add a point on the right edge
+        var shape = vm.sketch.value!!.shapes[0]
+        assertEquals(5, shape.points.size)
+        assertEquals(Pt(4f, 2f), shape.points[2])
+        assertFalse(shape.corners[2])
+        assertEquals(2, vm.sketch.value!!.selectedPoint)
+
+        // Drag it outwards to bow the edge into a curve.
+        assertEquals(2, vm.handleAt(Pt(4f, 2f), 0.5f))
+        vm.dragHandle(2, Pt(5.6f, 2.2f))
+        vm.dragHandle(2, Pt(6.1f, 1.9f))
+        vm.endHandleDrag()
+        shape = vm.sketch.value!!.shapes[0]
+        assertEquals(Pt(6f, 2f), shape.points[2])
+
+        vm.toggleSelectedCorner()
+        assertTrue(vm.sketch.value!!.shapes[0].corners[2])
+
+        vm.deleteSelectedPoint()
+        assertEquals(4, vm.sketch.value!!.shapes[0].points.size)
+
+        // One undo per action: delete, toggle, drag, add.
+        repeat(4) { vm.undo() }
+        assertEquals(4, vm.sketch.value!!.shapes[0].points.size)
+        assertTrue(vm.sketch.value!!.shapes[0].corners.all { it })
+
+        advanceUntilIdle()
+    }
+
+    @Test
+    fun fillWorksOnAreaClosedBySeparateLines() = runTest(dispatcher) {
+        vm.createDesign()
+        advanceUntilIdle()
+        vm.setTool(Tool.LINE)
+        vm.addStroke(listOf(Pt(0f, 0f), Pt(4f, 0f)))
+        vm.addStroke(listOf(Pt(4f, 0f), Pt(4f, 4f)))
+        vm.addStroke(listOf(Pt(4f, 4f), Pt(0f, 4f)))
+        vm.addStroke(listOf(Pt(0f, 4f), Pt(0f, 0f)))
+
+        vm.setFillColor(FILL_COLORS[3])
+        vm.tap(Pt(2f, 2f), 0.5f)
+        val shapes = vm.sketch.value!!.shapes
+        assertEquals(5, shapes.size)
+        assertEquals(FILL_COLORS[3], shapes[0].fill)
+        assertFalse(shapes[0].stroke)
+
+        // Tapping again recolours the same region instead of stacking another.
+        vm.setFillColor(FILL_COLORS[4])
+        vm.tap(Pt(2f, 2f), 0.5f)
+        assertEquals(5, vm.sketch.value!!.shapes.size)
+        assertEquals(FILL_COLORS[4], vm.sketch.value!!.shapes[0].fill)
+
+        // Clearing removes the region.
+        vm.setFillColor(null)
+        vm.tap(Pt(2f, 2f), 0.5f)
+        assertEquals(4, vm.sketch.value!!.shapes.size)
+        advanceUntilIdle()
+    }
+
+    @Test
     fun stagesAdvanceToDone() = runTest(dispatcher) {
         vm.createDesign()
         advanceUntilIdle()

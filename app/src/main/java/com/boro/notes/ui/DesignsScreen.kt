@@ -294,6 +294,11 @@ private fun SketchEditor(state: SketchState, vm: DesignsViewModel, notesVm: Note
                     onTap = vm::tap,
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                     previewShape = if (state.tool in SHAPE_TOOLS) vm::shapeFor else null,
+                    editing = state.selectedShape?.let { state.shapes.getOrNull(it) }.takeIf { state.tool == Tool.POINTS },
+                    selectedPoint = state.selectedPoint,
+                    onHandleHit = if (state.tool == Tool.POINTS) vm::handleAt else null,
+                    onHandleDrag = vm::dragHandle,
+                    onHandleDragEnd = vm::endHandleDrag,
                 )
                 HorizontalDivider()
                 ToolBar(state, vm)
@@ -396,6 +401,26 @@ private fun ToolBar(state: SketchState, vm: DesignsViewModel) {
             VerticalDivider(Modifier.height(24.dp))
             IconButton(onClick = vm::undo, enabled = state.canUndo) { Text("↶", fontSize = 22.sp) }
             IconButton(onClick = vm::redo, enabled = state.canRedo) { Text("↷", fontSize = 22.sp) }
+        }
+        if (state.tool == Tool.POINTS) {
+            Row(
+                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                val point = state.selectedPoint
+                val shape = state.selectedShape?.let { state.shapes.getOrNull(it) }
+                when {
+                    shape == null -> Text("Tap a line to edit its points", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    point == null -> Text("Drag a point to move it. Tap the line to add one.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    else -> {
+                        val isCorner = shape.corners.getOrElse(point) { true }
+                        FilterChip(selected = isCorner, onClick = vm::toggleSelectedCorner, label = { Text("Corner") })
+                        FilterChip(selected = !isCorner, onClick = vm::toggleSelectedCorner, label = { Text("Smooth") })
+                        TextButton(onClick = vm::deleteSelectedPoint) { Text("Delete point") }
+                    }
+                }
+            }
         }
         if (state.tool == Tool.FILL) {
             Row(

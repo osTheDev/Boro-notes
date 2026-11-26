@@ -37,6 +37,7 @@ import kotlin.math.floor
 /** Size of one grid square at 100% zoom. */
 private val GRID_UNIT = 20.dp
 private val TOUCH_TOLERANCE = 16.dp
+private val HANDLE_TOUCH = 24.dp
 
 const val TAG_CANVAS = "sketchCanvas"
 
@@ -52,6 +53,13 @@ fun SketchCanvas(
     modifier: Modifier = Modifier,
     /** When set, the stroke in progress is previewed as the finished shape instead of the raw finger path. */
     previewShape: ((List<Pt>) -> Shape?)? = null,
+    /** Points tool: the shape whose points are shown as draggable handles. */
+    editing: Shape? = null,
+    selectedPoint: Int? = null,
+    /** Returns the handle under a touch (grid units, tolerance), if any. */
+    onHandleHit: ((Pt, Float) -> Int?)? = null,
+    onHandleDrag: (Int, Pt) -> Unit = { _, _ -> },
+    onHandleDragEnd: () -> Unit = {},
 ) {
     val unitPx = with(LocalDensity.current) { GRID_UNIT.toPx() }
     val tolerancePx = with(LocalDensity.current) { TOUCH_TOLERANCE.toPx() }
@@ -63,6 +71,10 @@ fun SketchCanvas(
     val strokeCallback by rememberUpdatedState(onStroke)
     val tapCallback by rememberUpdatedState(onTap)
     val previewBuilder by rememberUpdatedState(previewShape)
+    val handleHit by rememberUpdatedState(onHandleHit)
+    val handleDrag by rememberUpdatedState(onHandleDrag)
+    val handleDragEnd by rememberUpdatedState(onHandleDragEnd)
+    val handleTolerancePx = with(LocalDensity.current) { HANDLE_TOUCH.toPx() }
 
     fun toWorld(o: Offset) = Pt((o.x - offsetX) / (unitPx * scale), (o.y - offsetY) / (unitPx * scale))
 
@@ -78,6 +90,21 @@ fun SketchCanvas(
             .pointerInput(unitPx) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
+                    val handle = handleHit?.invoke(toWorld(down.position), handleTolerancePx / (unitPx * scale))
+                    if (handle != null) {
+                        // Dragging a point of the selected shape.
+                        var dragged = false
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                            if (!change.pressed) break
+                            if ((change.position - down.position).getDistance() > viewConfiguration.touchSlop) dragged = true
+                            if (dragged) handleDrag(handle, toWorld(change.position))
+                            change.consume()
+                        }
+                        if (dragged) handleDragEnd() else tapCallback(toWorld(down.position), tolerancePx / (unitPx * scale))
+                        return@awaitEachGesture
+                    }
                     val stroke = mutableListOf(down.position)
                     var multiTouch = false
                     var moved = false
@@ -123,6 +150,7 @@ fun SketchCanvas(
         val step = unitPx * scale
         drawGrid(step, offsetX, offsetY, gridMinor, gridMajor)
         drawShapes(shapes, ink, 2.5.dp.toPx()) { p -> Offset(p.x * step + offsetX, p.y * step + offsetY) }
+        editing?.let { drawHandles(it, selectedPoint, step, offsetX, offsetY, inkPreview, background) }
         val builder = previewBuilder
         val previewed = if (builder != null && preview.size > 1) builder(preview.map(::toWorld)) else null
         if (previewed != null) {
@@ -134,6 +162,27 @@ fun SketchCanvas(
             }
             drawPath(path, inkPreview, style = Stroke(2.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
         }
+    }
+}
+
+/** Points of the shape being edited: filled squares-ish dots for corners, rings for smooth points. */
+private fun DrawScope.drawHandles(
+    shape: Shape,
+    selected: Int?,
+    step: Float,
+    offsetX: Float,
+    offsetY: Float,
+    accent: Color,
+    background: Color,
+) {
+    val r = 7.dp.toPx()
+    shape.points.forEachIndexed { i, p ->
+        val c = Offset(p.x * step + offsetX, p.y * step + offsetY)
+        val radius = if (i == selected) r * 1.5f else r
+        val corner = shape.corners.getOrElse(i) { true }
+        drawCircle(if (corner) accent else background, radius, c)
+        drawCircle(accent, radius, c, style = Stroke(2.dp.toPx()))
+        if (i == selected) drawCircle(accent.copy(alpha = 0.25f), radius * 2f, c)
     }
 }
 
@@ -174,7 +223,9 @@ fun DrawScope.drawShapes(shapes: List<Shape>, ink: Color, strokeWidth: Float, to
                 if (shape.closed) close()
             }
             shape.fill?.let { drawPath(path, Color(it).copy(alpha = 0.65f)) }
-            drawPath(path, ink, style = Stroke(strokeWidth, cap = StrokeCap.Round, join = StrokeJoin.Round))
+            if (shape.stroke) {
+                drawPath(path, ink, style = Stroke(strokeWidth, cap = StrokeCap.Round, join = StrokeJoin.Round))
+            }
         }
     }
 }

@@ -27,6 +27,8 @@ data class Shape(
     val corners: List<Boolean>,
     val closed: Boolean = false,
     val fill: Int? = null,
+    /** False for a fill-only region made from separate lines that enclose an area. */
+    val stroke: Boolean = true,
 )
 
 data class DrawOptions(
@@ -61,9 +63,7 @@ object Geometry {
         }
         if (pts.size < 2 || (closed && pts.size < 3)) return null
 
-        val targets = existing.flatMap { shape ->
-            shape.points.filterIndexed { i, _ -> shape.corners.getOrElse(i) { false } }
-        }
+        val targets = cornerPoints(existing)
         val snapped = pts.mapIndexed { i, p ->
             when {
                 !corners[i] -> p
@@ -207,7 +207,7 @@ object Geometry {
         return Shape(pts, List(n) { false }, closed = true)
     }
 
-    private fun cornerPoints(existing: List<Shape>) = existing.flatMap { shape ->
+    private fun cornerPoints(existing: List<Shape>) = existing.filter { it.stroke }.flatMap { shape ->
         shape.points.filterIndexed { i, _ -> shape.corners.getOrElse(i) { false } }
     }
 
@@ -271,31 +271,42 @@ object Geometry {
     /** The shape as a dense polyline, used for drawing, filling and hit testing. */
     fun outline(shape: Shape): List<Pt> {
         val p = shape.points
-        val n = p.size
-        if (n < 2) return p
-        val segments = if (shape.closed) n else n - 1
-        val out = ArrayList<Pt>(segments * SAMPLES_PER_SEGMENT + 1)
+        if (p.size < 2) return p
+        val out = ArrayList<Pt>(segmentCount(shape) * SAMPLES_PER_SEGMENT + 1)
         out += p[0]
-        for (s in 0 until segments) {
-            val i0 = s
-            val i1 = (s + 1) % n
-            val a = p[i0]
-            val b = p[i1]
-            val ta = tangent(shape, i0)
-            val tb = tangent(shape, i1)
-            if (ta == null && tb == null) {
-                out += b
-                continue
-            }
-            val m0 = ta ?: Pt(0f, 0f)
-            val m1 = tb ?: Pt(0f, 0f)
-            for (k in 1..SAMPLES_PER_SEGMENT) {
-                val t = k.toFloat() / SAMPLES_PER_SEGMENT
-                out += hermite(a, b, m0, m1, t)
-            }
-        }
+        for (s in 0 until segmentCount(shape)) out += segmentSamples(shape, s)
         return out
     }
+
+    private fun segmentCount(shape: Shape) =
+        if (shape.points.size < 2) 0 else if (shape.closed) shape.points.size else shape.points.size - 1
+
+    /** Points along segment [s] (from point s to the next), excluding its start. */
+    private fun segmentSamples(shape: Shape, s: Int): List<Pt> {
+        val p = shape.points
+        val i1 = (s + 1) % p.size
+        val a = p[s]
+        val b = p[i1]
+        val ta = tangent(shape, s)
+        val tb = tangent(shape, i1)
+        if (ta == null && tb == null) return listOf(b)
+        val m0 = ta ?: Pt(0f, 0f)
+        val m1 = tb ?: Pt(0f, 0f)
+        return (1..SAMPLES_PER_SEGMENT).map { k -> hermite(a, b, m0, m1, k.toFloat() / SAMPLES_PER_SEGMENT) }
+    }
+
+    /** The segment of [shape] closest to [p], for inserting a new point there. */
+    fun nearestSegment(shape: Shape, p: Pt): Int =
+        (0 until segmentCount(shape)).minByOrNull { s ->
+            val pts = listOf(shape.points[s]) + segmentSamples(shape, s)
+            pts.zipWithNext { a, b -> distToSegment(p, a, b) }.min()
+        } ?: 0
+
+    /** Index of the point of [shape] nearest to [p] within [tolerance]. */
+    fun pointAt(shape: Shape, p: Pt, tolerance: Float): Int? =
+        shape.points.indices
+            .minByOrNull { shape.points[it].dist(p) }
+            ?.takeIf { shape.points[it].dist(p) <= tolerance }
 
     /** Catmull-Rom tangent at a smooth point; null at corners so their segments stay straight. */
     private fun tangent(shape: Shape, i: Int): Pt? {
@@ -354,11 +365,104 @@ object Geometry {
     fun fillTarget(shapes: List<Shape>, p: Pt): Int? =
         shapes.indices.filter { contains(shapes[it], p) }.minByOrNull { area(shapes[it]) }
 
-    /** Index of the shape nearest to [p] within [tolerance] grid units. */
-    fun hitTarget(shapes: List<Shape>, p: Pt, tolerance: Float): Int? =
-        shapes.indices
+    /** Index of the drawn line nearest to [p] within [tolerance] grid units (fill-only regions last). */
+    fun hitTarget(shapes: List<Shape>, p: Pt, tolerance: Float): Int? {
+        fun nearest(candidates: List<Int>) = candidates
             .map { it to distance(shapes[it], p) }
             .filter { it.second <= tolerance }
             .minByOrNull { it.second }
             ?.first
+        return nearest(shapes.indices.filter { shapes[it].stroke })
+            ?: nearest(shapes.indices.filter { !shapes[it].stroke })
+    }
+
+    private const val JOIN_TOLERANCE = 0.3f
+    private const val MAX_LOOP_EDGES = 12
+    private const val MAX_SEARCH_STEPS = 20_000
+
+    /**
+     * The smallest area around [p] enclosed by open lines that meet end to end, as a closed
+     * outline, or null if those lines don't enclose [p].
+     */
+    fun enclosedRegion(shapes: List<Shape>, p: Pt): List<Pt>? {
+        val edges = shapes.filter { it.stroke && !it.closed && it.points.size >= 2 }.map { outline(it) }
+        if (edges.size < 2) return null
+
+        // Group line ends that touch into shared nodes.
+        val nodes = mutableListOf<Pt>()
+        fun nodeOf(q: Pt): Int {
+            val found = nodes.indexOfFirst { it.dist(q) <= JOIN_TOLERANCE }
+            if (found >= 0) return found
+            nodes += q
+            return nodes.lastIndex
+        }
+        val ends = edges.map { nodeOf(it.first()) to nodeOf(it.last()) }
+        val adjacency = HashMap<Int, MutableList<Int>>()
+        ends.forEachIndexed { e, (a, b) ->
+            if (a == b) return@forEachIndexed
+            adjacency.getOrPut(a) { mutableListOf() } += e
+            adjacency.getOrPut(b) { mutableListOf() } += e
+        }
+
+        var best: List<Pt>? = null
+        var bestArea = Float.MAX_VALUE
+        var steps = 0
+        val used = BooleanArray(edges.size)
+
+        fun walk(start: Int, at: Int, path: MutableList<Pt>, depth: Int) {
+            if (++steps > MAX_SEARCH_STEPS || depth > MAX_LOOP_EDGES) return
+            for (e in adjacency[at].orEmpty()) {
+                if (used[e]) continue
+                val (a, b) = ends[e]
+                val forward = a == at
+                val next = if (forward) b else a
+                val pts = if (forward) edges[e] else edges[e].asReversed()
+                used[e] = true
+                val added = pts.drop(1)
+                path += added
+                if (next == start && depth >= 1) {
+                    if (polygonContains(path, p)) {
+                        val area = polygonArea(path)
+                        if (area < bestArea) {
+                            bestArea = area
+                            best = path.toList()
+                        }
+                    }
+                } else if (next != start) {
+                    walk(start, next, path, depth + 1)
+                }
+                repeat(added.size) { path.removeAt(path.lastIndex) }
+                used[e] = false
+            }
+        }
+
+        for (start in adjacency.keys) {
+            walk(start, start, mutableListOf(nodes[start]), 0)
+        }
+        return best?.let { if (it.first().dist(it.last()) <= JOIN_TOLERANCE) it.dropLast(1) else it }
+    }
+
+    private fun polygonContains(poly: List<Pt>, p: Pt): Boolean {
+        var inside = false
+        var j = poly.lastIndex
+        for (i in poly.indices) {
+            val a = poly[i]
+            val b = poly[j]
+            if ((a.y > p.y) != (b.y > p.y) && p.x < (b.x - a.x) * (p.y - a.y) / (b.y - a.y) + a.x) {
+                inside = !inside
+            }
+            j = i
+        }
+        return inside
+    }
+
+    fun polygonArea(poly: List<Pt>): Float {
+        var sum = 0f
+        for (i in poly.indices) {
+            val a = poly[i]
+            val b = poly[(i + 1) % poly.size]
+            sum += a.x * b.y - b.x * a.y
+        }
+        return abs(sum) / 2f
+    }
 }
