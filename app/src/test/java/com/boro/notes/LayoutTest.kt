@@ -28,7 +28,6 @@ import com.boro.notes.ui.TAG_LIST_PANE
 import com.boro.notes.ui.TAG_NOTE_PREFIX
 import com.boro.notes.ui.TAG_TITLE
 import com.boro.notes.ui.TAG_FORMAT_BAR
-import com.boro.notes.ui.TAG_FORMAT_INSERT
 import com.boro.notes.ui.TAG_NOTE_BLANK
 import com.boro.notes.ui.TAG_NOTE_CHECK
 import com.boro.notes.ui.TAG_NOTE_COLUMNS
@@ -107,13 +106,11 @@ class RichNoteLayoutTest {
         rule.waitForIdle()
 
         rule.onNodeWithTag(TAG_FORMAT_BAR).assertIsDisplayed()
-        rule.onNodeWithTag(TAG_FORMAT_INSERT).performClick()
-        rule.onNodeWithTag("insert-table").performClick()
+        rule.onNodeWithTag("insert-table").performScrollTo().performClick()
         rule.waitForIdle()
         rule.onNodeWithTag(TAG_NOTE_TABLE).assertExists()
 
-        rule.onNodeWithTag(TAG_FORMAT_INSERT).performClick()
-        rule.onNodeWithTag("insert-columns").performClick()
+        rule.onNodeWithTag("insert-columns").performScrollTo().performClick()
         rule.waitForIdle()
         rule.onNodeWithTag(TAG_NOTE_COLUMNS).assertExists()
 
@@ -140,7 +137,7 @@ class NotePaperLayoutTest {
         rule.waitForIdle()
 
         for (item in listOf("paper-kraft", "pattern-ruled", "paper-margin")) {
-            rule.onNodeWithTag("format-page").performClick()
+            rule.onNodeWithTag("format-page").performScrollTo().performClick()
             rule.onNodeWithTag(item).performScrollTo().performClick()
             rule.waitForIdle()
         }
@@ -159,8 +156,7 @@ class NotePaperLayoutTest {
         rule.setContent { NotesScreen(vm) }
         rule.waitForIdle()
 
-        rule.onNodeWithTag(TAG_FORMAT_INSERT).performClick()
-        rule.onNodeWithTag("insert-columns").performClick()
+        rule.onNodeWithTag("insert-columns").performScrollTo().performClick()
         rule.waitForIdle()
         rule.onNodeWithTag("format-fill").performScrollTo().performClick()
         rule.onNodeWithTag("fill-sage").performScrollTo().performClick()
@@ -186,8 +182,7 @@ class CoverRichNoteLayoutTest {
         rule.setContent { NotesScreen(vm) }
         rule.waitForIdle()
 
-        rule.onNodeWithTag(TAG_FORMAT_INSERT).performClick()
-        rule.onNodeWithTag("insert-columns").performClick()
+        rule.onNodeWithTag("insert-columns").performScrollTo().performClick()
         rule.waitForIdle()
 
         val first = rule.onNodeWithText("Column 1", useUnmergedTree = true).getUnclippedBoundsInRoot()
@@ -205,8 +200,7 @@ class CoverRichNoteLayoutTest {
         rule.setContent { NotesScreen(vm) }
         rule.waitForIdle()
 
-        rule.onNodeWithTag("format-lists").performClick()
-        rule.onNodeWithTag("insert-check").performClick()
+        rule.onNodeWithTag("insert-check").performScrollTo().performClick()
         rule.waitForIdle()
         rule.onNodeWithTag(TAG_NOTE_CHECK).assertExists()
 
