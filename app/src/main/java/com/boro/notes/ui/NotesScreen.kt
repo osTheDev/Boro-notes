@@ -74,7 +74,7 @@ fun NotesScreen(vm: NotesViewModel) {
                 VerticalDivider()
                 Box(Modifier.weight(0.6f).fillMaxSize()) {
                     if (current != null) {
-                        EditorPane(current, showBack = false, vm = vm)
+                        EditorPane(current, vm, onBack = null)
                     } else {
                         EmptyDetail()
                     }
@@ -84,7 +84,7 @@ fun NotesScreen(vm: NotesViewModel) {
             list(Modifier.fillMaxSize().testTag(TAG_LIST_PANE))
         } else {
             BackHandler { vm.close() }
-            EditorPane(current, showBack = true, vm = vm)
+            EditorPane(current, vm, onBack = vm::close)
         }
     }
 }
@@ -160,7 +160,13 @@ private fun NoteRow(note: Note, selected: Boolean, onClick: () -> Unit) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun EditorPane(state: EditorState, showBack: Boolean, vm: NotesViewModel) {
+internal fun EditorPane(
+    state: EditorState,
+    vm: NotesViewModel,
+    onBack: (() -> Unit)?,
+    showDelete: Boolean = true,
+    modifier: Modifier = Modifier,
+) {
     val plain = TextFieldDefaults.colors(
         focusedContainerColor = Color.Transparent,
         unfocusedContainerColor = Color.Transparent,
@@ -168,20 +174,22 @@ private fun EditorPane(state: EditorState, showBack: Boolean, vm: NotesViewModel
         unfocusedIndicatorColor = Color.Transparent,
     )
     Scaffold(
-        modifier = Modifier.testTag(TAG_EDITOR_PANE),
+        modifier = modifier.testTag(TAG_EDITOR_PANE),
         topBar = {
             TopAppBar(
                 title = {},
                 navigationIcon = {
-                    if (showBack) {
-                        IconButton(onClick = vm::close, modifier = Modifier.testTag(TAG_BACK)) {
+                    if (onBack != null) {
+                        IconButton(onClick = onBack, modifier = Modifier.testTag(TAG_BACK)) {
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                         }
                     }
                 },
                 actions = {
-                    IconButton(onClick = vm::deleteOpenNote, modifier = Modifier.testTag(TAG_DELETE)) {
-                        Icon(Icons.Filled.Delete, contentDescription = "Delete note")
+                    if (showDelete) {
+                        IconButton(onClick = vm::deleteOpenNote, modifier = Modifier.testTag(TAG_DELETE)) {
+                            Icon(Icons.Filled.Delete, contentDescription = "Delete note")
+                        }
                     }
                 },
             )
