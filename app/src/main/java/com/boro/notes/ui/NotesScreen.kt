@@ -175,12 +175,6 @@ internal fun EditorPane(
     /** Extra buttons at the start of the top bar's actions. */
     extraActions: @Composable () -> Unit = {},
 ) {
-    val plain = TextFieldDefaults.colors(
-        focusedContainerColor = Color.Transparent,
-        unfocusedContainerColor = Color.Transparent,
-        focusedIndicatorColor = Color.Transparent,
-        unfocusedIndicatorColor = Color.Transparent,
-    )
     Scaffold(
         modifier = modifier.testTag(TAG_EDITOR_PANE),
         topBar = {
@@ -208,24 +202,29 @@ internal fun EditorPane(
         },
     ) { padding ->
         BoxWithConstraints(Modifier.padding(padding).fillMaxSize().imePadding()) {
-        val wide = maxWidth >= TWO_PANE_MIN_WIDTH
-        Column(Modifier.fillMaxSize()) {
-            TextField(
-                value = state.title,
-                onValueChange = vm::onTitleChange,
-                placeholder = { Text("Title") },
-                textStyle = MaterialTheme.typography.headlineSmall,
-                singleLine = true,
-                colors = plain,
-                modifier = Modifier.fillMaxWidth().testTag(TAG_TITLE),
-            )
             NoteEditor(
                 note = state,
                 onChange = vm::onDocChange,
-                wide = wide,
-                modifier = Modifier.fillMaxWidth().weight(1f).testTag(TAG_BODY),
+                wide = maxWidth >= TWO_PANE_MIN_WIDTH,
+                modifier = Modifier.fillMaxSize().testTag(TAG_BODY),
+                // The title sits on the note's paper, so it's coloured inside the paper theme.
+                header = {
+                    TextField(
+                        value = state.title,
+                        onValueChange = vm::onTitleChange,
+                        placeholder = { Text("Title") },
+                        textStyle = MaterialTheme.typography.headlineSmall,
+                        singleLine = true,
+                        colors = TextFieldDefaults.colors(
+                            focusedContainerColor = Color.Transparent,
+                            unfocusedContainerColor = Color.Transparent,
+                            focusedIndicatorColor = Color.Transparent,
+                            unfocusedIndicatorColor = Color.Transparent,
+                        ),
+                        modifier = Modifier.fillMaxWidth().testTag(TAG_TITLE),
+                    )
+                },
             )
-        }
         }
     }
 }

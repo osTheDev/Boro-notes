@@ -125,6 +125,33 @@ class RichNoteLayoutTest {
     }
 }
 
+/** Note paper: colour, lines and margin are chosen from the Page menu and saved with the note. */
+@RunWith(AndroidJUnit4::class)
+@Config(sdk = [34], qualifiers = "w700dp-h780dp")
+class NotePaperLayoutTest {
+    @get:Rule val rule = createComposeRule()
+
+    @Test
+    fun pageMenuSetsPaper() {
+        val vm = NotesViewModel(FakeNoteRepository(listOf(Note(id = 1, title = "Journal", body = "hello"))), SavedStateHandle())
+        vm.open(1)
+        rule.setContent { NotesScreen(vm) }
+        rule.waitForIdle()
+
+        for (item in listOf("paper-kraft", "pattern-ruled", "paper-margin")) {
+            rule.onNodeWithTag("format-page").performClick()
+            rule.onNodeWithTag(item).performClick()
+            rule.waitForIdle()
+        }
+        rule.mainClock.advanceTimeBy(1_000)
+        rule.waitForIdle()
+
+        val content = vm.editor.value!!.content.orEmpty()
+        assertTrue(content, content.contains("KRAFT") && content.contains("RULED") && content.contains("\"margin\":true"))
+        rule.onNodeWithTag(TAG_TITLE).assertIsDisplayed()
+    }
+}
+
 /** Cover screen: columns stay side by side, and inserting doesn't open the keyboard. */
 @RunWith(AndroidJUnit4::class)
 @Config(sdk = [34], qualifiers = "w360dp-h780dp")

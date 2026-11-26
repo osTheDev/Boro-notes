@@ -15,9 +15,41 @@ enum class TextKind(val label: String) {
     QUOTE("Quote"),
 }
 
-/** A note's content: a list of blocks, top to bottom. */
+/** The page a note is written on. Every note can look different. */
 @Serializable
-data class NoteDoc(val blocks: List<Block>) {
+data class Paper(
+    val color: PaperColor = PaperColor.DEFAULT,
+    val pattern: PaperPattern = PaperPattern.PLAIN,
+    /** A notebook margin line down the left. */
+    val margin: Boolean = false,
+)
+
+/** Page colours. [argb] null follows the app theme; [dark] pages get light text. */
+@Serializable
+enum class PaperColor(val label: String, val argb: Long?, val dark: Boolean = false) {
+    DEFAULT("Default", null),
+    CREAM("Cream", 0xFFFBF5E6),
+    KRAFT("Kraft", 0xFFE6D3AE),
+    SAGE("Sage", 0xFFE3EADB),
+    BLUSH("Blush", 0xFFF6E3DF),
+    SKY("Sky", 0xFFE2ECF6),
+    DENIM("Denim", 0xFF22385A, dark = true),
+    INDIGO("Indigo", 0xFF1A1D33, dark = true),
+    CHARCOAL("Charcoal", 0xFF262626, dark = true),
+}
+
+@Serializable
+enum class PaperPattern(val label: String) {
+    PLAIN("Plain"),
+    RULED("Ruled lines"),
+    GRID("Grid"),
+    GRAPH("Graph (fine grid)"),
+    DOTS("Dots"),
+}
+
+/** A note's content: a list of blocks, top to bottom, on a [paper]. */
+@Serializable
+data class NoteDoc(val blocks: List<Block>, val paper: Paper = Paper()) {
 
     /** Plain text of the whole note, used for search and the list preview. */
     fun plainText(htmlToText: (String) -> String = ::stripHtml): String = blocks.joinToString("\n") { b ->
@@ -74,7 +106,7 @@ data class NoteDoc(val blocks: List<Block>) {
 
     fun remove(id: String): NoteDoc {
         val left = blocks.filterNot { it.id == id }
-        return (if (left.isEmpty()) empty() else copy(blocks = left)).normalized()
+        return copy(blocks = left.ifEmpty { listOf(TextBlock(newId())) }).normalized()
     }
 
     fun move(id: String, by: Int): NoteDoc {

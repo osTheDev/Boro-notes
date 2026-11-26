@@ -4,6 +4,9 @@ import com.boro.notes.notes.CheckBlock
 import com.boro.notes.notes.ColumnsBlock
 import com.boro.notes.notes.DividerBlock
 import com.boro.notes.notes.NoteDoc
+import com.boro.notes.notes.PaperPattern
+import com.boro.notes.notes.PaperColor
+import com.boro.notes.notes.Paper
 import com.boro.notes.notes.TableBlock
 import com.boro.notes.notes.TextBlock
 import com.boro.notes.notes.TextKind
@@ -75,5 +78,15 @@ class NoteDocTest {
     @Test
     fun stripsHtmlForSearch() {
         assertEquals("Hi & bye\nnext", NoteDoc.stripHtml("<p>Hi &amp; <b>bye</b></p><p>next</p>"))
+    }
+
+    @Test
+    fun paperRoundTripsAndOldContentGetsPlainPaper() {
+        val doc = NoteDoc.empty().copy(paper = Paper(PaperColor.KRAFT, PaperPattern.RULED, margin = true))
+        assertEquals(doc, NoteDoc.load(doc.encode(), ""))
+        val old = """{"blocks":[{"type":"text","id":"a","html":"<p>hi</p>"}]}"""
+        assertEquals(Paper(), NoteDoc.load(old, "").paper)
+        // Removing the last block keeps the paper.
+        assertEquals(doc.paper, doc.remove(doc.blocks.single().id).paper)
     }
 }

@@ -52,6 +52,12 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import com.boro.notes.notes.PaperPattern
+import com.boro.notes.notes.PaperColor
+import com.boro.notes.notes.Paper
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.key.onPreviewKeyEvent
@@ -90,6 +96,7 @@ const val TAG_NOTE_TABLE = "noteTable"
 const val TAG_NOTE_COLUMNS = "noteColumns"
 const val TAG_NOTE_CHECK = "noteCheck"
 const val TAG_NOTE_BLANK = "noteBlank"
+const val TAG_NOTE_PAPER = "notePaper"
 
 private val TEXT_COLORS = listOf(
     "Red" to Color(0xFFE53935),
@@ -110,10 +117,17 @@ private val HIGHLIGHTS = listOf(
  * formatting bar. Reports every change (debounced) as document JSON plus plain text.
  */
 @Composable
-fun NoteEditor(note: EditorState, onChange: (content: String, plain: String) -> Unit, wide: Boolean, modifier: Modifier = Modifier) {
+fun NoteEditor(
+    note: EditorState,
+    onChange: (content: String, plain: String) -> Unit,
+    wide: Boolean,
+    modifier: Modifier = Modifier,
+    /** Shown above the body on the same paper (the title field). */
+    header: @Composable () -> Unit = {},
+) {
     // The editor owns the document once a note is open; reload only when another note opens.
     key(note.id) {
-        NoteEditorContent(note, onChange, wide, modifier)
+        NoteEditorContent(note, onChange, wide, modifier, header)
     }
 }
 
@@ -231,7 +245,13 @@ private class DocEditor(initial: NoteDoc) {
 
 @OptIn(FlowPreview::class)
 @Composable
-private fun NoteEditorContent(note: EditorState, onChange: (String, String) -> Unit, wide: Boolean, modifier: Modifier) {
+private fun NoteEditorContent(
+    note: EditorState,
+    onChange: (String, String) -> Unit,
+    wide: Boolean,
+    modifier: Modifier,
+    header: @Composable () -> Unit,
+) {
     val editor = remember { DocEditor(NoteDoc.load(note.content, note.body)) }
     val latestOnChange by rememberUpdatedState(onChange)
 
@@ -252,37 +272,120 @@ private fun NoteEditorContent(note: EditorState, onChange: (String, String) -> U
             .collect { latestOnChange(editor.snapshot().encode(), editor.plain()) }
     }
 
+    val paper = editor.doc.paper
+    val lined = paper.pattern != PaperPattern.PLAIN
     Column(modifier) {
-        Column(
-            Modifier
-                .weight(1f)
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 8.dp)
-                .testTag(TAG_NOTE_EDITOR),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            editor.doc.blocks.forEachIndexed { index, block ->
-                key(block.id) {
-                    when (block) {
-                        is TextBlock -> TextBlockView(editor, block, placeholder = index == 0 && editor.doc.blocks.size == 1)
-                        is CheckBlock -> CheckBlockView(editor, block)
-                        is TableBlock -> TableBlockView(editor, block, wide)
-                        is ColumnsBlock -> ColumnsBlockView(editor, block, wide)
-                        is DividerBlock -> DividerBlockView(editor, block)
+        PaperTheme(paper) {
+            Column(
+                Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .background(paper.color.argb?.let { Color(it) } ?: Color.Transparent)
+                    .verticalScroll(rememberScrollState())
+                    .testTag(TAG_NOTE_PAPER),
+            ) {
+                header()
+                val lineHeight = with(LocalDensity.current) { richTextStyle(TextKind.BODY).lineHeight.toDp() }
+                val start = if (paper.margin) 40.dp else 16.dp
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .paperLines(paper, lineHeight, top = 8.dp, marginX = if (paper.margin) 30.dp else null)
+                        .padding(start = start, end = 16.dp, top = 8.dp, bottom = 8.dp)
+                        .testTag(TAG_NOTE_EDITOR),
+                    // On lined paper, text blocks sit flush so they stay on the lines.
+                    verticalArrangement = Arrangement.spacedBy(if (lined) 0.dp else 6.dp),
+                ) {
+                    editor.doc.blocks.forEachIndexed { index, block ->
+                        key(block.id) {
+                            when (block) {
+                                is TextBlock -> TextBlockView(editor, block, placeholder = index == 0 && editor.doc.blocks.size == 1)
+                                is CheckBlock -> CheckBlockView(editor, block)
+                                is TableBlock -> TableBlockView(editor, block, wide)
+                                is ColumnsBlock -> ColumnsBlockView(editor, block, wide)
+                                is DividerBlock -> DividerBlockView(editor, block)
+                            }
+                        }
                     }
+                    // Blank space under the note: tap it to keep typing on the last line.
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .height(lineHeight * 12)
+                            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { editor.focusLast() }
+                            .testTag(TAG_NOTE_BLANK)
+                    )
                 }
             }
-            // Blank space under the note: tap it to keep typing on the last line.
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .height(200.dp)
-                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { editor.focusLast() }
-                    .testTag(TAG_NOTE_BLANK)
-            )
         }
         FormattingBar(editor)
+    }
+}
+
+/** Recolours the note's content for its paper; the default paper follows the app theme. */
+@Composable
+private fun PaperTheme(paper: Paper, content: @Composable () -> Unit) {
+    val argb = paper.color.argb
+    if (argb == null) {
+        content()
+        return
+    }
+    val cs = MaterialTheme.colorScheme
+    val ink = if (paper.color.dark) Color(0xFFF1EEE8) else Color(0xFF1F1B16)
+    MaterialTheme(
+        colorScheme = cs.copy(
+            surface = Color(argb),
+            onSurface = ink,
+            onSurfaceVariant = ink.copy(alpha = 0.6f),
+            outline = ink.copy(alpha = 0.45f),
+            outlineVariant = ink.copy(alpha = 0.25f),
+            surfaceContainerHigh = ink.copy(alpha = 0.07f),
+            primary = if (paper.color.dark) Color(0xFFB8C7FF) else Color(0xFF3B5BA9),
+        ),
+        content = content,
+    )
+}
+
+/**
+ * Draws the paper's lines behind the note. Ruled lines fall at the bottom of each body text line
+ * ([lineHeight] apart, starting [top] down), so writing sits on them like a notebook.
+ */
+@Composable
+private fun Modifier.paperLines(paper: Paper, lineHeight: Dp, top: Dp, marginX: Dp?): Modifier {
+    val ink = MaterialTheme.colorScheme.onSurface
+    val marginColor = Color(0xFFE57373)
+    return drawBehind {
+        val step = lineHeight.toPx()
+        val y0 = top.toPx()
+        val thin = 1.dp.toPx()
+        val line = ink.copy(alpha = 0.14f)
+        fun horizontal(gap: Float, color: Color) {
+            var y = y0 + gap
+            while (y < size.height) { drawLine(color, Offset(0f, y), Offset(size.width, y), thin); y += gap }
+        }
+        fun vertical(gap: Float, color: Color) {
+            var x = gap
+            while (x < size.width) { drawLine(color, Offset(x, y0), Offset(x, size.height), thin); x += gap }
+        }
+        when (paper.pattern) {
+            PaperPattern.PLAIN -> Unit
+            PaperPattern.RULED -> horizontal(step, line)
+            PaperPattern.GRID -> { horizontal(step, line); vertical(step, line) }
+            PaperPattern.GRAPH -> {
+                horizontal(step / 2, ink.copy(alpha = 0.07f)); vertical(step / 2, ink.copy(alpha = 0.07f))
+                horizontal(step * 2, line); vertical(step * 2, line)
+            }
+            PaperPattern.DOTS -> {
+                val r = 1.4.dp.toPx()
+                var y = y0 + step
+                while (y < size.height) {
+                    var x = step
+                    while (x < size.width) { drawCircle(ink.copy(alpha = 0.3f), r, Offset(x, y)); x += step }
+                    y += step
+                }
+            }
+        }
+        marginX?.let { m -> drawLine(marginColor.copy(alpha = 0.6f), Offset(m.toPx(), 0f), Offset(m.toPx(), size.height), thin) }
     }
 }
 
@@ -469,6 +572,16 @@ private fun DividerBlockView(editor: DocEditor, block: DividerBlock) {
     }
 }
 
+@Composable
+private fun MenuLabel(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+    )
+}
+
 /** A chip that opens a menu. */
 @Composable
 private fun FormatMenu(label: String, tag: String, content: @Composable (close: () -> Unit) -> Unit) {
@@ -597,6 +710,43 @@ private fun FormattingBar(editor: DocEditor) {
                 )
                 DropdownMenuItem(text = { Text("Divider") }, onClick = { focusManager.clearFocus(); editor.insert(DividerBlock(NoteDoc.newId())); close() })
                 DropdownMenuItem(text = { Text("Text block") }, onClick = { focusManager.clearFocus(); editor.insert(TextBlock(NoteDoc.newId())); close() })
+            }
+            FormatMenu("Page", "format-page") { close ->
+                val paper = editor.doc.paper
+                fun set(p: Paper) { editor.update(editor.doc.copy(paper = p)); close() }
+                MenuLabel("Paper")
+                PaperColor.entries.forEach { c ->
+                    DropdownMenuItem(
+                        text = { Text(c.label) },
+                        leadingIcon = {
+                            Box(
+                                Modifier.size(18.dp)
+                                    .background(c.argb?.let { Color(it) } ?: MaterialTheme.colorScheme.surface, CircleShape)
+                                    .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape)
+                            )
+                        },
+                        trailingIcon = { if (paper.color == c) Text("✓") },
+                        onClick = { set(paper.copy(color = c)) },
+                        modifier = Modifier.testTag("paper-${c.name.lowercase()}"),
+                    )
+                }
+                HorizontalDivider()
+                MenuLabel("Lines")
+                PaperPattern.entries.forEach { pt ->
+                    DropdownMenuItem(
+                        text = { Text(pt.label) },
+                        trailingIcon = { if (paper.pattern == pt) Text("✓") },
+                        onClick = { set(paper.copy(pattern = pt)) },
+                        modifier = Modifier.testTag("pattern-${pt.name.lowercase()}"),
+                    )
+                }
+                HorizontalDivider()
+                DropdownMenuItem(
+                    text = { Text("Margin line") },
+                    trailingIcon = { if (paper.margin) Text("✓") },
+                    onClick = { set(paper.copy(margin = !paper.margin)) },
+                    modifier = Modifier.testTag("paper-margin"),
+                )
             }
             if (focusedBlock is TableBlock) {
                 val (r, c) = editor.focused!!.substringAfter('@').split(',').map { it.toIntOrNull() ?: 0 }.let { it[0] to it.getOrElse(1) { 0 } }
