@@ -26,6 +26,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TopAppBar
@@ -55,26 +56,28 @@ fun NotesScreen(vm: NotesViewModel) {
     LifecycleEventEffect(Lifecycle.Event.ON_STOP) { vm.flush() }
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
+        val wide = maxWidth >= TWO_PANE_MIN_WIDTH
         val list = @Composable { modifier: Modifier ->
             NoteListPane(
                 notes = notes,
                 query = query,
                 selectedId = editor?.id,
                 onQueryChange = vm::onQueryChange,
-                onOpen = vm::open,
-                onCreate = vm::createNote,
+                // On the inner screen notes open full screen; the list slides in from a button.
+                onOpen = { id -> vm.open(id); if (wide) vm.setFullScreen(true) },
+                onCreate = { vm.createNote(); if (wide) vm.setFullScreen(true) },
                 modifier = modifier,
             )
         }
         val current = editor
 
-        if (maxWidth >= TWO_PANE_MIN_WIDTH) {
+        if (wide) {
             Row(Modifier.fillMaxSize()) {
                 list(Modifier.weight(0.4f).testTag(TAG_LIST_PANE))
                 VerticalDivider()
                 Box(Modifier.weight(0.6f).fillMaxSize()) {
                     if (current != null) {
-                        EditorPane(current, vm, onBack = null)
+                        EditorPane(current, vm, onBack = null, onExpand = { vm.setFullScreen(true) })
                     } else {
                         EmptyDetail()
                     }
@@ -91,7 +94,7 @@ fun NotesScreen(vm: NotesViewModel) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun NoteListPane(
+internal fun NoteListPane(
     notes: List<Note>,
     query: String,
     selectedId: Long?,
@@ -166,6 +169,10 @@ internal fun EditorPane(
     onBack: (() -> Unit)?,
     showDelete: Boolean = true,
     modifier: Modifier = Modifier,
+    /** When set, shows a Full screen button. */
+    onExpand: (() -> Unit)? = null,
+    /** Extra buttons at the start of the top bar's actions. */
+    extraActions: @Composable () -> Unit = {},
 ) {
     val plain = TextFieldDefaults.colors(
         focusedContainerColor = Color.Transparent,
@@ -186,6 +193,10 @@ internal fun EditorPane(
                     }
                 },
                 actions = {
+                    extraActions()
+                    if (onExpand != null) {
+                        TextButton(onClick = onExpand, modifier = Modifier.testTag(TAG_EXPAND)) { Text("Full screen") }
+                    }
                     if (showDelete) {
                         IconButton(onClick = vm::deleteOpenNote, modifier = Modifier.testTag(TAG_DELETE)) {
                             Icon(Icons.Filled.Delete, contentDescription = "Delete note")
@@ -232,4 +243,5 @@ const val TAG_TITLE = "titleField"
 const val TAG_BODY = "bodyField"
 const val TAG_BACK = "back"
 const val TAG_DELETE = "delete"
+const val TAG_EXPAND = "expandNote"
 const val TAG_NOTE_PREFIX = "note-"
