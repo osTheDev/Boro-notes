@@ -266,8 +266,6 @@ private fun Thumbnail(design: Design, modifier: Modifier) {
 private fun SketchEditor(state: SketchState, vm: DesignsViewModel, notesVm: NotesViewModel, wide: Boolean) {
     // On the cover screen the linked note opens over the canvas; on the inner screen it sits beside it.
     var showNote by rememberSaveable(state.id) { mutableStateOf(false) }
-    // Inner screen: the notes panel beside the canvas can be hidden for more drawing room.
-    var notesPanel by rememberSaveable { mutableStateOf(true) }
     val noteEditor by notesVm.editor.collectAsStateWithLifecycle()
 
     LaunchedEffect(state.noteId) { state.noteId?.let(notesVm::open) }
@@ -309,10 +307,14 @@ private fun SketchEditor(state: SketchState, vm: DesignsViewModel, notesVm: Note
                             showNote = true
                         }) { Text("Note") }
                     } else {
+                        // Inner screen: the design's note opens full screen.
                         TextButton(
-                            onClick = { notesPanel = !notesPanel },
+                            onClick = {
+                                if (state.noteId == null) vm.createLinkedNote()
+                                notesVm.setFullScreen(true)
+                            },
                             modifier = Modifier.testTag(TAG_NOTES_TOGGLE),
-                        ) { Text(if (notesPanel) "Hide notes" else "Notes") }
+                        ) { Text("Notes") }
                     }
                     EditorOverflow(vm)
                 },
@@ -320,8 +322,7 @@ private fun SketchEditor(state: SketchState, vm: DesignsViewModel, notesVm: Note
         },
     ) { padding ->
         Row(Modifier.padding(padding).fillMaxSize()) {
-            val sideNotes = wide && notesPanel
-            Column(Modifier.weight(if (sideNotes) 0.62f else 1f).fillMaxHeight()) {
+            Column(Modifier.weight(1f).fillMaxHeight()) {
                 SketchCanvas(
                     shapes = state.shapes,
                     onStroke = vm::addStroke,
@@ -337,10 +338,6 @@ private fun SketchEditor(state: SketchState, vm: DesignsViewModel, notesVm: Note
                 )
                 HorizontalDivider()
                 ToolBar(state, vm)
-            }
-            if (sideNotes) {
-                VerticalDivider()
-                LinkedNotePane(state, noteEditor, vm, notesVm, onBack = null, Modifier.weight(0.38f).fillMaxHeight())
             }
         }
     }

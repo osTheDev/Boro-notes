@@ -56,20 +56,22 @@ fun NotesScreen(vm: NotesViewModel) {
     LifecycleEventEffect(Lifecycle.Event.ON_STOP) { vm.flush() }
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
+        val wide = maxWidth >= TWO_PANE_MIN_WIDTH
         val list = @Composable { modifier: Modifier ->
             NoteListPane(
                 notes = notes,
                 query = query,
                 selectedId = editor?.id,
                 onQueryChange = vm::onQueryChange,
-                onOpen = vm::open,
-                onCreate = vm::createNote,
+                // On the inner screen notes open full screen; the list slides in from a button.
+                onOpen = { id -> vm.open(id); if (wide) vm.setFullScreen(true) },
+                onCreate = { vm.createNote(); if (wide) vm.setFullScreen(true) },
                 modifier = modifier,
             )
         }
         val current = editor
 
-        if (maxWidth >= TWO_PANE_MIN_WIDTH) {
+        if (wide) {
             Row(Modifier.fillMaxSize()) {
                 list(Modifier.weight(0.4f).testTag(TAG_LIST_PANE))
                 VerticalDivider()
@@ -92,7 +94,7 @@ fun NotesScreen(vm: NotesViewModel) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun NoteListPane(
+internal fun NoteListPane(
     notes: List<Note>,
     query: String,
     selectedId: Long?,
@@ -169,6 +171,8 @@ internal fun EditorPane(
     modifier: Modifier = Modifier,
     /** When set, shows a Full screen button. */
     onExpand: (() -> Unit)? = null,
+    /** Extra buttons at the start of the top bar's actions. */
+    extraActions: @Composable () -> Unit = {},
 ) {
     val plain = TextFieldDefaults.colors(
         focusedContainerColor = Color.Transparent,
@@ -189,6 +193,7 @@ internal fun EditorPane(
                     }
                 },
                 actions = {
+                    extraActions()
                     if (onExpand != null) {
                         TextButton(onClick = onExpand, modifier = Modifier.testTag(TAG_EXPAND)) { Text("Full screen") }
                     }

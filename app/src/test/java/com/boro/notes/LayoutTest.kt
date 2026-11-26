@@ -102,14 +102,14 @@ class CoverDesignsLayoutTest {
     }
 }
 
-/** Designs on the inner screen: tracker board, then canvas with the linked note beside it. */
+/** Designs on the inner screen: tracker board, then canvas; the design's note opens full screen. */
 @RunWith(AndroidJUnit4::class)
 @Config(sdk = [34], qualifiers = "w840dp-h780dp")
 class InnerDesignsLayoutTest {
     @get:Rule val rule = createComposeRule()
 
     @Test
-    fun boardThenCanvasBesideNote() {
+    fun boardThenCanvasThenFullScreenNote() {
         val notes = FakeNoteRepository()
         val notesVm = NotesViewModel(notes, SavedStateHandle())
         val designsVm = com.boro.notes.ui.DesignsViewModel(
@@ -126,28 +126,51 @@ class InnerDesignsLayoutTest {
         rule.onNodeWithTag("${com.boro.notes.ui.TAG_DESIGN_PREFIX}1").performClick()
         rule.waitForIdle()
         rule.onNodeWithTag(com.boro.notes.ui.TAG_CANVAS).assertIsDisplayed()
-        rule.onNodeWithTag(com.boro.notes.ui.TAG_LINKED_NOTE).assertIsDisplayed()
 
-        rule.onNodeWithTag(com.boro.notes.ui.TAG_LINK_NOTE_BUTTON).performClick()
+        // Notes creates the design's note and opens it over everything.
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_NOTES_TOGGLE).performClick()
         rule.waitForIdle()
         rule.onNodeWithTag(TAG_EDITOR_PANE).assertIsDisplayed()
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_CANVAS).assertDoesNotExist()
+        rule.onNodeWithTag("navDesigns").assertDoesNotExist()
         assertEquals("Smock", notesVm.editor.value!!.title)
 
-        // Full screen note covers the side menu and canvas; back returns.
-        rule.onNodeWithTag(com.boro.notes.ui.TAG_EXPAND).performClick()
-        rule.waitForIdle()
-        rule.onNodeWithTag("navDesigns").assertDoesNotExist()
-        rule.onNodeWithTag(com.boro.notes.ui.TAG_CANVAS).assertDoesNotExist()
+        // Back returns to the sketch.
         rule.onNodeWithTag(TAG_BACK).performClick()
         rule.waitForIdle()
         rule.onNodeWithTag(com.boro.notes.ui.TAG_CANVAS).assertIsDisplayed()
+    }
+}
 
-        // Hiding the notes panel gives the canvas the full width.
-        rule.onNodeWithTag(com.boro.notes.ui.TAG_NOTES_TOGGLE).performClick()
+/** Notes on the inner screen open full screen with a list that slides in. */
+@RunWith(AndroidJUnit4::class)
+@Config(sdk = [34], qualifiers = "w840dp-h780dp")
+class InnerNotesFullScreenTest {
+    @get:Rule val rule = createComposeRule()
+
+    @Test
+    fun noteOpensFullScreenWithCollapsibleList() {
+        val notes = FakeNoteRepository(listOf(Note(id = 1, title = "Tee"), Note(id = 2, title = "Coat")))
+        val notesVm = NotesViewModel(notes, SavedStateHandle())
+        val designsVm = com.boro.notes.ui.DesignsViewModel(FakeDesignRepository(), notes, SavedStateHandle())
+        rule.setContent { com.boro.notes.ui.BoroRoot(notesVm, designsVm) }
+
+        rule.onNodeWithTag("${TAG_NOTE_PREFIX}1").performClick()
         rule.waitForIdle()
-        rule.onNodeWithTag(com.boro.notes.ui.TAG_LINKED_NOTE).assertDoesNotExist()
-        rule.onNodeWithTag(com.boro.notes.ui.TAG_NOTES_TOGGLE).performClick()
+        rule.onNodeWithTag(TAG_EDITOR_PANE).assertIsDisplayed()
+        rule.onNodeWithTag(TAG_LIST_PANE).assertDoesNotExist()
+        rule.onNodeWithTag("navNotes").assertDoesNotExist()
+
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_LIST_TOGGLE).performClick()
         rule.waitForIdle()
-        rule.onNodeWithTag(com.boro.notes.ui.TAG_LINKED_NOTE).assertIsDisplayed()
+        rule.onNodeWithTag("${TAG_NOTE_PREFIX}2").performClick()
+        rule.waitForIdle()
+        assertEquals("Coat", notesVm.editor.value!!.title)
+
+        // Back closes the note and returns to the list with the side menu.
+        rule.onNodeWithTag(TAG_BACK).performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag("navNotes").assertIsDisplayed()
+        rule.onNodeWithTag(TAG_LIST_PANE).assertIsDisplayed()
     }
 }

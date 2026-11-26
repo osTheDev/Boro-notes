@@ -45,7 +45,7 @@ class NotesViewModel(
     val fullScreen: StateFlow<Boolean> = _fullScreen.asStateFlow()
 
     fun setFullScreen(on: Boolean) {
-        _fullScreen.value = on && _editor.value != null
+        _fullScreen.value = on
     }
 
     init {

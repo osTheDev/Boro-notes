@@ -8,7 +8,12 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.width
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.VerticalDivider
+import androidx.compose.ui.unit.dp
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Create
@@ -28,6 +33,48 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
+/** A note filling the screen, with a small button that slides the notes list in and out. */
+@Composable
+private fun FullScreenNote(note: EditorState, vm: NotesViewModel, fromDesign: Boolean) {
+    var listOpen by rememberSaveable { mutableStateOf(false) }
+    val notes by vm.notes.collectAsStateWithLifecycle()
+    val query by vm.query.collectAsStateWithLifecycle()
+    // Back from a design's note returns to the sketch; from Notes it closes the note.
+    val back = { if (fromDesign) vm.setFullScreen(false) else vm.close() }
+    BackHandler { if (listOpen) listOpen = false else back() }
+
+    Row(Modifier.fillMaxSize()) {
+        if (listOpen && !fromDesign) {
+            NoteListPane(
+                notes = notes,
+                query = query,
+                selectedId = note.id,
+                onQueryChange = vm::onQueryChange,
+                onOpen = { vm.open(it) },
+                onCreate = vm::createNote,
+                modifier = Modifier.width(300.dp).fillMaxHeight().testTag(TAG_LIST_PANE),
+            )
+            VerticalDivider()
+        }
+        EditorPane(
+            note,
+            vm,
+            onBack = back,
+            showDelete = !fromDesign,
+            modifier = Modifier.weight(1f),
+            extraActions = {
+                if (!fromDesign) {
+                    TextButton(onClick = { listOpen = !listOpen }, modifier = Modifier.testTag(TAG_LIST_TOGGLE)) {
+                        Text(if (listOpen) "Hide list" else "All notes")
+                    }
+                }
+            },
+        )
+    }
+}
+
+const val TAG_LIST_TOGGLE = "listToggle"
+
 enum class Section(val label: String, val icon: ImageVector, val tag: String) {
     NOTES("Notes", Icons.AutoMirrored.Filled.List, "navNotes"),
     DESIGNS("Designs", Icons.Filled.Create, "navDesigns"),
@@ -42,16 +89,15 @@ fun BoroRoot(notesVm: NotesViewModel, designsVm: DesignsViewModel) {
     val fullScreen by notesVm.fullScreen.collectAsStateWithLifecycle()
     val openNote = notesVm.editor.collectAsStateWithLifecycle().value
 
-    // A note in full screen covers everything, side menu included.
-    if (fullScreen && openNote != null) {
-        BackHandler { notesVm.setFullScreen(false) }
-        EditorPane(
-            openNote,
-            notesVm,
-            onBack = { notesVm.setFullScreen(false) },
-            showDelete = false,
-            modifier = Modifier.fillMaxSize(),
-        )
+    val sketch by designsVm.sketch.collectAsStateWithLifecycle()
+
+    // A note in full screen covers everything, side menu included. From Designs it must be the
+    // design's own note (it may still be loading just after "Notes" is tapped).
+    val fullScreenNote = openNote?.takeIf {
+        fullScreen && (section == Section.NOTES || it.id == sketch?.noteId)
+    }
+    if (fullScreenNote != null) {
+        FullScreenNote(fullScreenNote, notesVm, fromDesign = section == Section.DESIGNS)
         return
     }
 
