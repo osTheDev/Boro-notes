@@ -163,6 +163,55 @@ class DesignsViewModelTest {
     }
 
     @Test
+    fun selectGroupMoveAndMirror() = runTest(dispatcher) {
+        vm.createDesign()
+        advanceUntilIdle()
+        vm.setTool(Tool.BOX)
+        vm.addStroke(listOf(Pt(0f, 0f), Pt(4f, 4f)))
+        vm.setTool(Tool.HARDWARE)
+        vm.tap(Pt(1.1f, 0.9f), 0.5f) // a rivet near the corner
+        assertEquals(com.boro.notes.sketch.Stamp.RIVET, vm.sketch.value!!.shapes[1].stamp)
+        assertEquals(Pt(1f, 1f), vm.sketch.value!!.shapes[1].points[0])
+
+        vm.setTool(Tool.SELECT)
+        vm.tap(Pt(2f, 2f), 0.5f) // inside the box
+        vm.tap(Pt(1f, 1f), 0.5f) // the rivet
+        assertEquals(setOf(0, 1), vm.sketch.value!!.selection)
+        vm.groupSelection()
+        vm.topstitchSelection()
+        assertEquals(3, vm.sketch.value!!.shapes.size)
+        assertEquals(1, vm.sketch.value!!.shapes.map { it.group }.toSet().size)
+
+        // Tapping any piece of a group selects the whole group.
+        vm.clearSelection()
+        vm.tap(Pt(1f, 1f), 0.5f)
+        assertEquals(setOf(0, 1, 2), vm.sketch.value!!.selection)
+
+        // Drag the pocket 3 squares right; it moves as one piece.
+        assertTrue(vm.beginDrag(Pt(2f, 2f), 0.5f))
+        vm.drag(Pt(5.2f, 2.1f))
+        vm.endDrag()
+        assertEquals(Pt(3f, 0f), vm.sketch.value!!.shapes[0].points[0])
+        assertEquals(Pt(4f, 1f), vm.sketch.value!!.shapes[1].points[0])
+
+        vm.duplicateSelection(mirror = true)
+        assertEquals(6, vm.sketch.value!!.shapes.size)
+        assertEquals(setOf(3, 4, 5), vm.sketch.value!!.selection)
+
+        vm.undo()
+        assertEquals(3, vm.sketch.value!!.shapes.size)
+        advanceUntilIdle()
+    }
+
+    @Test
+    fun presetStartsWithAGarment() = runTest(dispatcher) {
+        vm.createDesign(com.boro.notes.sketch.Preset.JEANS_FRONT)
+        advanceUntilIdle()
+        assertEquals("Jeans (front)", vm.sketch.value!!.name)
+        assertTrue(vm.sketch.value!!.shapes.size > 10)
+    }
+
+    @Test
     fun stagesAdvanceToDone() = runTest(dispatcher) {
         vm.createDesign()
         advanceUntilIdle()

@@ -32,6 +32,7 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -72,7 +73,10 @@ import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.boro.notes.data.Design
 import com.boro.notes.data.Stage
+import com.boro.notes.sketch.FillPattern
+import com.boro.notes.sketch.Preset
 import com.boro.notes.sketch.SketchCodec
+import com.boro.notes.sketch.Stamp
 
 const val TAG_DESIGN_LIST = "designList"
 const val TAG_DESIGN_BOARD = "designBoard"
@@ -81,6 +85,8 @@ const val TAG_SKETCH_EDITOR = "sketchEditor"
 const val TAG_DESIGN_PREFIX = "design-"
 const val TAG_LINKED_NOTE = "linkedNote"
 const val TAG_LINK_NOTE_BUTTON = "linkNote"
+const val TAG_NOTES_TOGGLE = "notesToggle"
+const val TAG_PRESET_PREFIX = "preset-"
 
 /** Tools that drag out a perfect shape and preview it while dragging. */
 private val SHAPE_TOOLS = setOf(Tool.LINE, Tool.BOX, Tool.OVAL)
@@ -204,8 +210,27 @@ private fun DesignBoard(vm: DesignsViewModel) {
 
 @Composable
 private fun NewDesignFab(vm: DesignsViewModel) {
-    FloatingActionButton(onClick = vm::createDesign, modifier = Modifier.testTag(TAG_NEW_DESIGN)) {
+    var picking by remember { mutableStateOf(false) }
+    FloatingActionButton(onClick = { picking = true }, modifier = Modifier.testTag(TAG_NEW_DESIGN)) {
         Icon(Icons.Filled.Add, contentDescription = "New design")
+    }
+    if (picking) {
+        AlertDialog(
+            onDismissRequest = { picking = false },
+            title = { Text("Start from") },
+            text = {
+                Column {
+                    Preset.entries.forEach { preset ->
+                        TextButton(
+                            onClick = { picking = false; vm.createDesign(preset) },
+                            modifier = Modifier.fillMaxWidth().testTag("$TAG_PRESET_PREFIX${preset.name}"),
+                        ) { Text(preset.label, modifier = Modifier.fillMaxWidth()) }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = { TextButton(onClick = { picking = false }) { Text("Cancel") } },
+        )
     }
 }
 
@@ -240,6 +265,8 @@ private fun Thumbnail(design: Design, modifier: Modifier) {
 private fun SketchEditor(state: SketchState, vm: DesignsViewModel, notesVm: NotesViewModel, wide: Boolean) {
     // On the cover screen the linked note opens over the canvas; on the inner screen it sits beside it.
     var showNote by rememberSaveable(state.id) { mutableStateOf(false) }
+    // Inner screen: the notes panel beside the canvas can be hidden for more drawing room.
+    var notesPanel by rememberSaveable { mutableStateOf(true) }
     val noteEditor by notesVm.editor.collectAsStateWithLifecycle()
 
     LaunchedEffect(state.noteId) { state.noteId?.let(notesVm::open) }
@@ -280,6 +307,11 @@ private fun SketchEditor(state: SketchState, vm: DesignsViewModel, notesVm: Note
                             if (state.noteId == null) vm.createLinkedNote()
                             showNote = true
                         }) { Text("Note") }
+                    } else {
+                        TextButton(
+                            onClick = { notesPanel = !notesPanel },
+                            modifier = Modifier.testTag(TAG_NOTES_TOGGLE),
+                        ) { Text(if (notesPanel) "Hide notes" else "Notes") }
                     }
                     EditorOverflow(vm)
                 },
@@ -287,7 +319,8 @@ private fun SketchEditor(state: SketchState, vm: DesignsViewModel, notesVm: Note
         },
     ) { padding ->
         Row(Modifier.padding(padding).fillMaxSize()) {
-            Column(Modifier.weight(if (wide) 0.62f else 1f).fillMaxHeight()) {
+            val sideNotes = wide && notesPanel
+            Column(Modifier.weight(if (sideNotes) 0.62f else 1f).fillMaxHeight()) {
                 SketchCanvas(
                     shapes = state.shapes,
                     onStroke = vm::addStroke,
@@ -296,14 +329,15 @@ private fun SketchEditor(state: SketchState, vm: DesignsViewModel, notesVm: Note
                     previewShape = if (state.tool in SHAPE_TOOLS) vm::shapeFor else null,
                     editing = state.selectedShape?.let { state.shapes.getOrNull(it) }.takeIf { state.tool == Tool.POINTS },
                     selectedPoint = state.selectedPoint,
-                    onHandleHit = if (state.tool == Tool.POINTS) vm::handleAt else null,
-                    onHandleDrag = vm::dragHandle,
-                    onHandleDragEnd = vm::endHandleDrag,
+                    selection = state.selection,
+                    onDragStart = if (state.tool == Tool.POINTS || state.tool == Tool.SELECT) vm::beginDrag else null,
+                    onDrag = vm::drag,
+                    onDragEnd = vm::endDrag,
                 )
                 HorizontalDivider()
                 ToolBar(state, vm)
             }
-            if (wide) {
+            if (sideNotes) {
                 VerticalDivider()
                 LinkedNotePane(state, noteEditor, vm, notesVm, onBack = null, Modifier.weight(0.38f).fillMaxHeight())
             }
@@ -345,6 +379,20 @@ private fun LinkedNotePane(
                     TextButton(onClick = onBack) { Text("Back to sketch") }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun PatternPicker(vm: DesignsViewModel) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        TextButton(onClick = { open = true }) { Text("Quilting") }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            FillPattern.entries.forEach {
+                DropdownMenuItem(text = { Text(it.label) }, onClick = { vm.setPattern(it); open = false })
+            }
+            DropdownMenuItem(text = { Text("None") }, onClick = { vm.setPattern(null); open = false })
         }
     }
 }
@@ -401,6 +449,42 @@ private fun ToolBar(state: SketchState, vm: DesignsViewModel) {
             VerticalDivider(Modifier.height(24.dp))
             IconButton(onClick = vm::undo, enabled = state.canUndo) { Text("↶", fontSize = 22.sp) }
             IconButton(onClick = vm::redo, enabled = state.canRedo) { Text("↷", fontSize = 22.sp) }
+        }
+        if (state.tool == Tool.SELECT) {
+            Row(
+                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (state.selection.isEmpty()) {
+                    Text("Tap shapes to select them, then drag to move", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                } else {
+                    val grouped = state.selection.any { state.shapes.getOrNull(it)?.group != null }
+                    TextButton(onClick = if (grouped) vm::ungroupSelection else vm::groupSelection) { Text(if (grouped) "Ungroup" else "Group") }
+                    TextButton(onClick = { vm.duplicateSelection(mirror = false) }) { Text("Duplicate") }
+                    TextButton(onClick = { vm.duplicateSelection(mirror = true) }) { Text("Mirror copy") }
+                    TextButton(onClick = vm::flipSelection) { Text("Flip") }
+                    TextButton(onClick = vm::topstitchSelection) { Text("Topstitch") }
+                    TextButton(onClick = vm::toggleStitchStyle) { Text("Stitch line") }
+                    TextButton(onClick = vm::clipCorners) { Text("Clip corners") }
+                    TextButton(onClick = vm::roundCorners) { Text("Round corners") }
+                    PatternPicker(vm)
+                    TextButton(onClick = vm::deleteSelection) { Text("Delete") }
+                    TextButton(onClick = vm::clearSelection) { Text("Done") }
+                }
+            }
+        }
+        if (state.tool == Tool.HARDWARE) {
+            Row(
+                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Stamp.entries.forEach { stamp ->
+                    FilterChip(selected = state.stamp == stamp, onClick = { vm.setStamp(stamp) }, label = { Text(stamp.label) })
+                }
+                Text("Tap to place", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
         if (state.tool == Tool.POINTS) {
             Row(

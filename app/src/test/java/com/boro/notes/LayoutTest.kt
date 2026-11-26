@@ -93,7 +93,10 @@ class CoverDesignsLayoutTest {
 
         rule.onNodeWithTag(com.boro.notes.ui.TAG_NEW_DESIGN).performClick()
         rule.waitForIdle()
+        rule.onNodeWithTag("${com.boro.notes.ui.TAG_PRESET_PREFIX}JEANS_FRONT").performClick()
+        rule.waitForIdle()
         rule.onNodeWithTag(com.boro.notes.ui.TAG_SKETCH_EDITOR).assertIsDisplayed()
+        assertEquals("Jeans (front)", designsVm.sketch.value!!.name)
         rule.onNodeWithTag(com.boro.notes.ui.TAG_CANVAS).assertIsDisplayed()
         rule.onNodeWithTag("navDesigns").assertDoesNotExist()
     }
@@ -129,5 +132,13 @@ class InnerDesignsLayoutTest {
         rule.waitForIdle()
         rule.onNodeWithTag(TAG_EDITOR_PANE).assertIsDisplayed()
         assertEquals("Smock", notesVm.editor.value!!.title)
+
+        // Hiding the notes panel gives the canvas the full width.
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_NOTES_TOGGLE).performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_LINKED_NOTE).assertDoesNotExist()
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_NOTES_TOGGLE).performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_LINKED_NOTE).assertIsDisplayed()
     }
 }

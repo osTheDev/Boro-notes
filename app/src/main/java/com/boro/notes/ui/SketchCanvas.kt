@@ -19,6 +19,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.DrawScope
@@ -28,7 +30,10 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+import com.boro.notes.sketch.Edits
 import com.boro.notes.sketch.Geometry
+import com.boro.notes.sketch.LineStyle
+import com.boro.notes.sketch.Stamp
 import com.boro.notes.sketch.Pt
 import com.boro.notes.sketch.Shape
 import kotlin.math.ceil
@@ -56,10 +61,12 @@ fun SketchCanvas(
     /** Points tool: the shape whose points are shown as draggable handles. */
     editing: Shape? = null,
     selectedPoint: Int? = null,
-    /** Returns the handle under a touch (grid units, tolerance), if any. */
-    onHandleHit: ((Pt, Float) -> Int?)? = null,
-    onHandleDrag: (Int, Pt) -> Unit = { _, _ -> },
-    onHandleDragEnd: () -> Unit = {},
+    /** Shapes picked with the Select tool, highlighted. */
+    selection: Set<Int> = emptySet(),
+    /** Called when a finger goes down (grid units, tolerance); true means the tool drags instead of drawing. */
+    onDragStart: ((Pt, Float) -> Boolean)? = null,
+    onDrag: (Pt) -> Unit = {},
+    onDragEnd: () -> Unit = {},
 ) {
     val unitPx = with(LocalDensity.current) { GRID_UNIT.toPx() }
     val tolerancePx = with(LocalDensity.current) { TOUCH_TOLERANCE.toPx() }
@@ -71,9 +78,9 @@ fun SketchCanvas(
     val strokeCallback by rememberUpdatedState(onStroke)
     val tapCallback by rememberUpdatedState(onTap)
     val previewBuilder by rememberUpdatedState(previewShape)
-    val handleHit by rememberUpdatedState(onHandleHit)
-    val handleDrag by rememberUpdatedState(onHandleDrag)
-    val handleDragEnd by rememberUpdatedState(onHandleDragEnd)
+    val dragStart by rememberUpdatedState(onDragStart)
+    val dragMove by rememberUpdatedState(onDrag)
+    val dragEnd by rememberUpdatedState(onDragEnd)
     val handleTolerancePx = with(LocalDensity.current) { HANDLE_TOUCH.toPx() }
 
     fun toWorld(o: Offset) = Pt((o.x - offsetX) / (unitPx * scale), (o.y - offsetY) / (unitPx * scale))
@@ -90,19 +97,20 @@ fun SketchCanvas(
             .pointerInput(unitPx) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
-                    val handle = handleHit?.invoke(toWorld(down.position), handleTolerancePx / (unitPx * scale))
-                    if (handle != null) {
-                        // Dragging a point of the selected shape.
+                    val takesDrag = dragStart?.invoke(toWorld(down.position), handleTolerancePx / (unitPx * scale)) == true
+                    if (takesDrag) {
+                        // Dragging a point, or moving the selection.
                         var dragged = false
                         while (true) {
                             val event = awaitPointerEvent()
                             val change = event.changes.firstOrNull { it.id == down.id } ?: break
                             if (!change.pressed) break
                             if ((change.position - down.position).getDistance() > viewConfiguration.touchSlop) dragged = true
-                            if (dragged) handleDrag(handle, toWorld(change.position))
+                            if (dragged) dragMove(toWorld(change.position))
                             change.consume()
                         }
-                        if (dragged) handleDragEnd() else tapCallback(toWorld(down.position), tolerancePx / (unitPx * scale))
+                        dragEnd()
+                        if (!dragged) tapCallback(toWorld(down.position), tolerancePx / (unitPx * scale))
                         return@awaitEachGesture
                     }
                     val stroke = mutableListOf(down.position)
@@ -149,12 +157,14 @@ fun SketchCanvas(
         drawRect(background)
         val step = unitPx * scale
         drawGrid(step, offsetX, offsetY, gridMinor, gridMajor)
-        drawShapes(shapes, ink, 2.5.dp.toPx()) { p -> Offset(p.x * step + offsetX, p.y * step + offsetY) }
+        val toScreen = { p: Pt -> Offset(p.x * step + offsetX, p.y * step + offsetY) }
+        if (selection.isNotEmpty()) drawSelection(shapes, selection, inkPreview, toScreen)
+        drawShapes(shapes, ink, 2.5.dp.toPx(), toScreen)
         editing?.let { drawHandles(it, selectedPoint, step, offsetX, offsetY, inkPreview, background) }
         val builder = previewBuilder
         val previewed = if (builder != null && preview.size > 1) builder(preview.map(::toWorld)) else null
         if (previewed != null) {
-            drawShapes(listOf(previewed), inkPreview, 2.5.dp.toPx()) { p -> Offset(p.x * step + offsetX, p.y * step + offsetY) }
+            drawShapes(listOf(previewed), inkPreview, 2.5.dp.toPx(), toScreen)
         } else if (preview.size > 1 && builder == null) {
             val path = Path().apply {
                 moveTo(preview[0].x, preview[0].y)
@@ -207,27 +217,94 @@ private fun DrawScope.drawGrid(step: Float, offsetX: Float, offsetY: Float, mino
     }
 }
 
-/** Draws shapes with fills; [toScreen] maps grid units to pixels. Used by the canvas and thumbnails. */
+/** Topstitch thread colour, like contrast denim stitching. */
+val THREAD = Color(0xFFE0A458)
+private val COPPER = Color(0xFFB87333)
+private val BRASS = Color(0xFFC9A227)
+private val BUTTON_METAL = Color(0xFF8A8D91)
+
+private fun shapePath(shape: Shape, toScreen: (Pt) -> Offset): Path? {
+    val outline = Geometry.outline(shape)
+    if (outline.size < 2) return null
+    return Path().apply {
+        val first = toScreen(outline[0])
+        moveTo(first.x, first.y)
+        for (k in 1 until outline.size) {
+            val o = toScreen(outline[k])
+            lineTo(o.x, o.y)
+        }
+        if (shape.closed) close()
+    }
+}
+
+/** Draws shapes with fills, patterns, stitching and hardware; [toScreen] maps grid units to pixels. */
 fun DrawScope.drawShapes(shapes: List<Shape>, ink: Color, strokeWidth: Float, toScreen: (Pt) -> Offset) {
+    val unit = (toScreen(Pt(1f, 0f)) - toScreen(Pt(0f, 0f))).x
+    val stitchEffect = PathEffect.dashPathEffect(floatArrayOf(0.28f * unit, 0.18f * unit))
     clipRect {
         for (shape in shapes) {
-            val outline = Geometry.outline(shape)
-            if (outline.size < 2) continue
-            val path = Path().apply {
-                val first = toScreen(outline[0])
-                moveTo(first.x, first.y)
-                for (k in 1 until outline.size) {
-                    val o = toScreen(outline[k])
-                    lineTo(o.x, o.y)
-                }
-                if (shape.closed) close()
+            shape.stamp?.let { stamp ->
+                drawStamp(stamp, toScreen(shape.points.first()), stamp.radius * unit)
+                continue
             }
+            val path = shapePath(shape, toScreen) ?: continue
             shape.fill?.let { drawPath(path, Color(it).copy(alpha = 0.65f)) }
-            if (shape.stroke) {
+            shape.pattern?.let { pattern ->
+                clipPath(path) {
+                    for ((a, b) in Edits.patternLines(shape, pattern)) {
+                        drawLine(THREAD, toScreen(a), toScreen(b), strokeWidth * 0.6f, pathEffect = stitchEffect)
+                    }
+                }
+            }
+            if (!shape.stroke) continue
+            if (shape.style == LineStyle.STITCH) {
+                drawPath(path, THREAD, style = Stroke(strokeWidth * 0.8f, cap = StrokeCap.Round, pathEffect = stitchEffect))
+            } else {
                 drawPath(path, ink, style = Stroke(strokeWidth, cap = StrokeCap.Round, join = StrokeJoin.Round))
             }
         }
     }
+}
+
+private fun DrawScope.drawStamp(stamp: Stamp, c: Offset, r: Float) {
+    val color = when (stamp) {
+        Stamp.RIVET -> COPPER
+        Stamp.SNAP -> BRASS
+        Stamp.BUTTON -> BUTTON_METAL
+    }
+    drawCircle(color, r, c)
+    drawCircle(Color.Black.copy(alpha = 0.35f), r, c, style = Stroke(r * 0.18f))
+    when (stamp) {
+        Stamp.RIVET -> drawCircle(Color.White.copy(alpha = 0.35f), r * 0.35f, c - Offset(r * 0.25f, r * 0.25f))
+        Stamp.SNAP -> drawCircle(Color.Black.copy(alpha = 0.3f), r * 0.55f, c, style = Stroke(r * 0.12f))
+        Stamp.BUTTON -> {
+            drawCircle(Color.Black.copy(alpha = 0.3f), r * 0.7f, c, style = Stroke(r * 0.1f))
+            drawCircle(Color.Black.copy(alpha = 0.45f), r * 0.18f, c)
+        }
+    }
+}
+
+/** A soft glow under selected shapes plus a dashed box around them. */
+private fun DrawScope.drawSelection(shapes: List<Shape>, selection: Set<Int>, accent: Color, toScreen: (Pt) -> Offset) {
+    val chosen = selection.mapNotNull { shapes.getOrNull(it) }
+    for (shape in chosen) {
+        if (shape.stamp != null) {
+            val unit = (toScreen(Pt(1f, 0f)) - toScreen(Pt(0f, 0f))).x
+            drawCircle(accent.copy(alpha = 0.3f), (shape.stamp.radius + 0.25f) * unit, toScreen(shape.points.first()))
+            continue
+        }
+        val path = shapePath(shape, toScreen) ?: continue
+        drawPath(path, accent.copy(alpha = 0.3f), style = Stroke(10.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+    }
+    val b = Edits.bounds(chosen) ?: return
+    val tl = toScreen(Pt(b.minX - 0.3f, b.minY - 0.3f))
+    val br = toScreen(Pt(b.maxX + 0.3f, b.maxY + 0.3f))
+    drawRect(
+        accent,
+        topLeft = tl,
+        size = androidx.compose.ui.geometry.Size(br.x - tl.x, br.y - tl.y),
+        style = Stroke(1.5.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(8.dp.toPx(), 6.dp.toPx()))),
+    )
 }
 
 /** Fits shapes into the draw area, for list thumbnails. */

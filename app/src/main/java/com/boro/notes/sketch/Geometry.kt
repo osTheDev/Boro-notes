@@ -29,7 +29,31 @@ data class Shape(
     val fill: Int? = null,
     /** False for a fill-only region made from separate lines that enclose an area. */
     val stroke: Boolean = true,
+    /** Shapes sharing a group id select and move together. */
+    val group: Long? = null,
+    val style: LineStyle = LineStyle.SOLID,
+    /** Quilting/stitch pattern drawn inside a closed shape. */
+    val pattern: FillPattern? = null,
+    /** Hardware drawn at the shape's single point. */
+    val stamp: Stamp? = null,
 )
+
+@Serializable
+enum class LineStyle { SOLID, STITCH }
+
+@Serializable
+enum class FillPattern(val label: String) {
+    DIAMOND("Diamond"),
+    LINES("Lines"),
+    CROSSHATCH("Crosshatch"),
+}
+
+@Serializable
+enum class Stamp(val label: String, val radius: Float) {
+    RIVET("Rivet", 0.3f),
+    SNAP("Snap", 0.5f),
+    BUTTON("Button", 0.65f),
+}
 
 data class DrawOptions(
     val snapToGrid: Boolean = true,
@@ -207,7 +231,7 @@ object Geometry {
         return Shape(pts, List(n) { false }, closed = true)
     }
 
-    private fun cornerPoints(existing: List<Shape>) = existing.filter { it.stroke }.flatMap { shape ->
+    private fun cornerPoints(existing: List<Shape>) = existing.filter { it.stroke && it.stamp == null }.flatMap { shape ->
         shape.points.filterIndexed { i, _ -> shape.corners.getOrElse(i) { false } }
     }
 

@@ -12,6 +12,11 @@ import com.boro.notes.data.DesignRepository
 import com.boro.notes.data.NoteRepository
 import com.boro.notes.data.Stage
 import com.boro.notes.sketch.DrawOptions
+import com.boro.notes.sketch.Edits
+import com.boro.notes.sketch.FillPattern
+import com.boro.notes.sketch.LineStyle
+import com.boro.notes.sketch.Preset
+import com.boro.notes.sketch.Stamp
 import com.boro.notes.sketch.Geometry
 import com.boro.notes.sketch.Pt
 import com.boro.notes.sketch.Shape
@@ -31,8 +36,10 @@ enum class Tool(val label: String) {
     LINE("Line"),
     BOX("Box"),
     OVAL("Oval"),
+    SELECT("Select"),
     POINTS("Points"),
     FILL("Fill"),
+    HARDWARE("Hardware"),
     ERASE("Erase"),
 }
 
@@ -51,6 +58,10 @@ data class SketchState(
     /** Points tool: the shape being edited and its selected point. */
     val selectedShape: Int? = null,
     val selectedPoint: Int? = null,
+    /** Select tool: the shapes picked (whole groups at a time). */
+    val selection: Set<Int> = emptySet(),
+    /** Hardware tool: what a tap places. */
+    val stamp: Stamp = Stamp.RIVET,
 )
 
 /** Fill swatches; null clears a fill. */
@@ -95,9 +106,16 @@ class DesignsViewModel(
         savedState[KEY_FILTER] = stage
     }
 
-    fun createDesign() {
+    fun createDesign(preset: Preset = Preset.BLANK) {
         flush()
-        viewModelScope.launch { load(designs.create()) }
+        viewModelScope.launch {
+            val id = designs.create()
+            if (preset != Preset.BLANK) {
+                val shapes = SketchCodec.encode(preset.shapes())
+                designs.update(id) { it.copy(name = preset.label, shapes = shapes) }
+            }
+            load(id)
+        }
     }
 
     fun open(id: Long) {
@@ -132,8 +150,10 @@ class DesignsViewModel(
     fun rename(name: String) = updateOpen(persist = false) { it.copy(name = name) }.also { scheduleSave() }
 
     fun setTool(tool: Tool) = updateOpen(persist = false) {
-        it.copy(tool = tool, selectedShape = null, selectedPoint = null)
+        it.copy(tool = tool, selectedShape = null, selectedPoint = null, selection = emptySet())
     }
+
+    fun setStamp(stamp: Stamp) = updateOpen(persist = false) { it.copy(stamp = stamp, tool = Tool.HARDWARE) }
 
     fun setFillColor(color: Int?) = updateOpen(persist = false) { it.copy(fillColor = color, tool = Tool.FILL) }
 
@@ -156,7 +176,7 @@ class DesignsViewModel(
             Tool.LINE -> Geometry.line(from, to, current.shapes, current.options)
             Tool.BOX -> Geometry.box(from, to, current.shapes, current.options)
             Tool.OVAL -> Geometry.oval(from, to, current.options)
-            Tool.POINTS, Tool.FILL, Tool.ERASE -> null
+            Tool.SELECT, Tool.POINTS, Tool.FILL, Tool.HARDWARE, Tool.ERASE -> null
         }
     }
 
@@ -173,12 +193,141 @@ class DesignsViewModel(
         when (current.tool) {
             Tool.DRAW, Tool.LINE, Tool.BOX, Tool.OVAL -> Unit
             Tool.POINTS -> pointsTap(at, tolerance)
+            Tool.SELECT -> selectTap(at, tolerance)
+            Tool.HARDWARE -> {
+                val spot = if (current.options.snapToGrid) Pt(Math.round(at.x * 2) / 2f, Math.round(at.y * 2) / 2f) else at
+                commitShapes(current.shapes + Shape(listOf(spot), listOf(true), stamp = current.stamp))
+            }
             Tool.FILL -> fillAt(at)
             Tool.ERASE -> {
                 val index = Geometry.hitTarget(current.shapes, at, tolerance) ?: return
                 commitShapes(current.shapes.filterIndexed { i, _ -> i != index })
             }
         }
+    }
+
+    // --- Dragging (Points handles and moving a selection) ---
+
+    private var dragHandleIndex: Int? = null
+    private var moveOrigin: Pt? = null
+    private var moveBase: List<Shape> = emptyList()
+
+    /** Called when a finger goes down; returns true if this tool takes the drag instead of drawing. */
+    fun beginDrag(at: Pt, tolerance: Float): Boolean {
+        val current = _sketch.value ?: return false
+        when (current.tool) {
+            Tool.POINTS -> {
+                dragHandleIndex = handleAt(at, tolerance) ?: return false
+                return true
+            }
+            Tool.SELECT -> {
+                if (current.selection.isEmpty()) return false
+                val onSelection = current.selection.any { i ->
+                    val s = current.shapes.getOrNull(i) ?: return@any false
+                    Geometry.distance(s, at) <= tolerance || Geometry.contains(s, at)
+                }
+                if (!onSelection) return false
+                moveOrigin = at
+                moveBase = current.shapes
+                return true
+            }
+            else -> return false
+        }
+    }
+
+    fun drag(to: Pt) {
+        val current = _sketch.value ?: return
+        dragHandleIndex?.let { dragHandle(it, to); return }
+        val origin = moveOrigin ?: return
+        if (!dragging) {
+            dragging = true
+            undoStack.addLast(moveBase)
+            redoStack.clear()
+        }
+        val d = Edits.snapDelta(to - origin, current.options.snapToGrid)
+        _sketch.value = current.copy(shapes = Edits.move(moveBase, current.selection, d), canUndo = true, canRedo = false)
+    }
+
+    fun endDrag() {
+        dragHandleIndex = null
+        moveOrigin = null
+        moveBase = emptyList()
+        endHandleDrag()
+    }
+
+    // --- Select tool ---
+
+    /** Tapping a shape adds it (and its group) to the selection, or takes it out; tapping empty space clears. */
+    private fun selectTap(at: Pt, tolerance: Float) {
+        val current = _sketch.value ?: return
+        val hit = Geometry.hitTarget(current.shapes, at, tolerance)
+            ?: Geometry.fillTarget(current.shapes, at)
+        if (hit == null) {
+            _sketch.value = current.copy(selection = emptySet())
+            return
+        }
+        val picked = Edits.withGroup(current.shapes, hit)
+        val selection = if (current.selection.containsAll(picked)) current.selection - picked else current.selection + picked
+        _sketch.value = current.copy(selection = selection)
+    }
+
+    fun clearSelection() {
+        _sketch.value = _sketch.value?.copy(selection = emptySet(), selectedShape = null, selectedPoint = null)
+    }
+
+    private fun editSelection(change: (List<Shape>, Set<Int>) -> List<Shape>) {
+        val current = _sketch.value ?: return
+        if (current.selection.isEmpty()) return
+        commitShapes(change(current.shapes, current.selection))
+    }
+
+    fun groupSelection() = editSelection(Edits::group)
+    fun ungroupSelection() = editSelection(Edits::ungroup)
+    fun flipSelection() = editSelection(Edits::flip)
+    fun clipCorners() = editSelection { shapes, sel -> shapes.mapIndexed { i, s -> if (i in sel) Edits.corners(s, Edits.CornerStyle.CLIPPED) else s } }
+    fun roundCorners() = editSelection { shapes, sel -> shapes.mapIndexed { i, s -> if (i in sel) Edits.corners(s, Edits.CornerStyle.ROUNDED) else s } }
+
+    fun toggleStitchStyle() = editSelection { shapes, sel ->
+        val makeStitch = sel.any { shapes[it].style == LineStyle.SOLID }
+        shapes.mapIndexed { i, s -> if (i in sel) s.copy(style = if (makeStitch) LineStyle.STITCH else LineStyle.SOLID) else s }
+    }
+
+    /** Sets (or with null, clears) a quilting pattern inside the selected closed shapes. */
+    fun setPattern(pattern: FillPattern?) = editSelection { shapes, sel ->
+        shapes.mapIndexed { i, s -> if (i in sel && s.closed && s.stamp == null) s.copy(pattern = pattern) else s }
+    }
+
+    /** Adds topstitching inside each selected closed shape, grouped with it. */
+    fun topstitchSelection() {
+        val current = _sketch.value ?: return
+        if (current.selection.isEmpty()) return
+        var shapes = current.shapes
+        val added = mutableListOf<Shape>()
+        for (i in current.selection.sorted()) {
+            val s = shapes[i]
+            if (!s.closed || s.stamp != null || !s.stroke) continue
+            val group = s.group ?: Edits.newGroupId(shapes).also { g ->
+                shapes = shapes.toMutableList().also { it[i] = s.copy(group = g) }
+            }
+            Edits.topstitch(shapes[i])?.let { added += it.copy(group = group) }
+        }
+        if (added.isEmpty()) return
+        val start = shapes.size
+        commitShapes(shapes + added)
+        _sketch.value = _sketch.value?.copy(selection = current.selection + (start until start + added.size))
+    }
+
+    fun duplicateSelection(mirror: Boolean) {
+        val current = _sketch.value ?: return
+        if (current.selection.isEmpty()) return
+        val (shapes, copies) = Edits.duplicate(current.shapes, current.selection, mirror)
+        commitShapes(shapes)
+        _sketch.value = _sketch.value?.copy(selection = copies)
+    }
+
+    fun deleteSelection() {
+        editSelection(Edits::delete)
+        _sketch.value = _sketch.value?.copy(selection = emptySet())
     }
 
     // --- Points tool ---
@@ -315,6 +464,7 @@ class DesignsViewModel(
     fun clearCanvas() {
         val current = _sketch.value ?: return
         if (current.shapes.isNotEmpty()) commitShapes(emptyList())
+        clearSelection()
     }
 
     /** Creates a note named after the open design and links it. */
@@ -350,10 +500,6 @@ class DesignsViewModel(
             shapes = SketchCodec.decode(design.shapes),
         )
         savedState[KEY_OPEN_ID] = design.id
-    }
-
-    private fun clearSelection() {
-        _sketch.value = _sketch.value?.copy(selectedShape = null, selectedPoint = null)
     }
 
     private fun commitShapes(shapes: List<Shape>) {
