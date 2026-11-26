@@ -50,6 +50,8 @@ fun SketchCanvas(
     onStroke: (List<Pt>) -> Unit,
     onTap: (Pt, Float) -> Unit,
     modifier: Modifier = Modifier,
+    /** When set, the stroke in progress is previewed as the finished shape instead of the raw finger path. */
+    previewShape: ((List<Pt>) -> Shape?)? = null,
 ) {
     val unitPx = with(LocalDensity.current) { GRID_UNIT.toPx() }
     val tolerancePx = with(LocalDensity.current) { TOUCH_TOLERANCE.toPx() }
@@ -60,6 +62,7 @@ fun SketchCanvas(
 
     val strokeCallback by rememberUpdatedState(onStroke)
     val tapCallback by rememberUpdatedState(onTap)
+    val previewBuilder by rememberUpdatedState(previewShape)
 
     fun toWorld(o: Offset) = Pt((o.x - offsetX) / (unitPx * scale), (o.y - offsetY) / (unitPx * scale))
 
@@ -120,7 +123,11 @@ fun SketchCanvas(
         val step = unitPx * scale
         drawGrid(step, offsetX, offsetY, gridMinor, gridMajor)
         drawShapes(shapes, ink, 2.5.dp.toPx()) { p -> Offset(p.x * step + offsetX, p.y * step + offsetY) }
-        if (preview.size > 1) {
+        val builder = previewBuilder
+        val previewed = if (builder != null && preview.size > 1) builder(preview.map(::toWorld)) else null
+        if (previewed != null) {
+            drawShapes(listOf(previewed), inkPreview, 2.5.dp.toPx()) { p -> Offset(p.x * step + offsetX, p.y * step + offsetY) }
+        } else if (preview.size > 1 && builder == null) {
             val path = Path().apply {
                 moveTo(preview[0].x, preview[0].y)
                 preview.drop(1).forEach { lineTo(it.x, it.y) }

@@ -172,6 +172,48 @@ object Geometry {
         return out
     }
 
+    /** A straight line from where the finger went down to where it lifted. */
+    fun line(from: Pt, to: Pt, existing: List<Shape>, options: DrawOptions): Shape? {
+        val targets = cornerPoints(existing)
+        val a = pin(from, targets, options)
+        val b = pin(to, targets, options)
+        if (a == b) return null
+        return Shape(listOf(a, b), listOf(true, true))
+    }
+
+    /** A rectangle with [from] and [to] as opposite corners. */
+    fun box(from: Pt, to: Pt, existing: List<Shape>, options: DrawOptions): Shape? {
+        val targets = cornerPoints(existing)
+        val a = pin(from, targets, options)
+        val b = pin(to, targets, options)
+        if (a.x == b.x || a.y == b.y) return null
+        return Shape(listOf(a, Pt(b.x, a.y), b, Pt(a.x, b.y)), List(4) { true }, closed = true)
+    }
+
+    /** An oval filling the box from [from] to [to]. */
+    fun oval(from: Pt, to: Pt, options: DrawOptions): Shape? {
+        val a = if (options.snapToGrid) snap(from) else from
+        val b = if (options.snapToGrid) snap(to) else to
+        if (a.x == b.x || a.y == b.y) return null
+        val cx = (a.x + b.x) / 2
+        val cy = (a.y + b.y) / 2
+        val rx = abs(b.x - a.x) / 2
+        val ry = abs(b.y - a.y) / 2
+        val n = 16
+        val pts = (0 until n).map { i ->
+            val t = 2 * Math.PI * i / n
+            Pt(cx + rx * kotlin.math.cos(t).toFloat(), cy + ry * kotlin.math.sin(t).toFloat())
+        }
+        return Shape(pts, List(n) { false }, closed = true)
+    }
+
+    private fun cornerPoints(existing: List<Shape>) = existing.flatMap { shape ->
+        shape.points.filterIndexed { i, _ -> shape.corners.getOrElse(i) { false } }
+    }
+
+    private fun pin(p: Pt, targets: List<Pt>, options: DrawOptions): Pt =
+        magnet(p, targets, options.magnetRadius) ?: if (options.snapToGrid) snap(p) else p
+
     fun snap(p: Pt) = Pt(p.x.roundToInt().toFloat(), p.y.roundToInt().toFloat())
 
     private fun magnet(p: Pt, targets: List<Pt>, radius: Float): Pt? =

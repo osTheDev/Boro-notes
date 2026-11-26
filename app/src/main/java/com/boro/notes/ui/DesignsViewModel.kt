@@ -26,7 +26,14 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
-enum class Tool { DRAW, FILL, ERASE }
+enum class Tool(val label: String) {
+    DRAW("Draw"),
+    LINE("Line"),
+    BOX("Box"),
+    OVAL("Oval"),
+    FILL("Fill"),
+    ERASE("Erase"),
+}
 
 /** The design open on the canvas, with its drawing and the canvas tool settings. */
 data class SketchState(
@@ -132,10 +139,25 @@ class DesignsViewModel(
         it.copy(options = it.options.copy(straighten = !it.options.straighten))
     }
 
+    /** The shape a stroke (in grid units) turns into with the current tool; also used for the live preview. */
+    fun shapeFor(raw: List<Pt>): Shape? {
+        val current = _sketch.value ?: return null
+        if (raw.size < 2) return null
+        val from = raw.first()
+        val to = raw.last()
+        return when (current.tool) {
+            Tool.DRAW -> Geometry.recognize(raw, current.shapes, current.options)
+            Tool.LINE -> Geometry.line(from, to, current.shapes, current.options)
+            Tool.BOX -> Geometry.box(from, to, current.shapes, current.options)
+            Tool.OVAL -> Geometry.oval(from, to, current.options)
+            Tool.FILL, Tool.ERASE -> null
+        }
+    }
+
     /** A finished finger stroke, in grid units. */
     fun addStroke(raw: List<Pt>) {
         val current = _sketch.value ?: return
-        val shape = Geometry.recognize(raw, current.shapes, current.options) ?: return
+        val shape = shapeFor(raw) ?: return
         commitShapes(current.shapes + shape)
     }
 
@@ -143,7 +165,7 @@ class DesignsViewModel(
     fun tap(at: Pt, tolerance: Float) {
         val current = _sketch.value ?: return
         when (current.tool) {
-            Tool.DRAW -> Unit
+            Tool.DRAW, Tool.LINE, Tool.BOX, Tool.OVAL -> Unit
             Tool.FILL -> {
                 val index = Geometry.fillTarget(current.shapes, at) ?: return
                 if (current.shapes[index].fill == current.fillColor) return

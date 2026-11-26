@@ -81,6 +81,18 @@ class DesignsViewModelTest {
     }
 
     @Test
+    fun boxToolDrawsRectangleFromDrag() = runTest(dispatcher) {
+        vm.createDesign()
+        advanceUntilIdle()
+        vm.setTool(Tool.BOX)
+        // A wobbly drag only uses its start and end.
+        vm.addStroke(listOf(Pt(0.1f, 0.2f), Pt(2f, 3f), Pt(1f, 1f), Pt(5.9f, 3.1f)))
+        val shape = vm.sketch.value!!.shapes.single()
+        assertEquals(listOf(Pt(0f, 0f), Pt(6f, 0f), Pt(6f, 3f), Pt(0f, 3f)), shape.points)
+        assertTrue(shape.closed)
+    }
+
+    @Test
     fun stagesAdvanceToDone() = runTest(dispatcher) {
         vm.createDesign()
         advanceUntilIdle()

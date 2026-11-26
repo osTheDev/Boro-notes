@@ -82,6 +82,9 @@ const val TAG_DESIGN_PREFIX = "design-"
 const val TAG_LINKED_NOTE = "linkedNote"
 const val TAG_LINK_NOTE_BUTTON = "linkNote"
 
+/** Tools that drag out a perfect shape and preview it while dragging. */
+private val SHAPE_TOOLS = setOf(Tool.LINE, Tool.BOX, Tool.OVAL)
+
 @Composable
 fun DesignsScreen(designsVm: DesignsViewModel, notesVm: NotesViewModel, wide: Boolean) {
     val sketch by designsVm.sketch.collectAsStateWithLifecycle()
@@ -290,6 +293,7 @@ private fun SketchEditor(state: SketchState, vm: DesignsViewModel, notesVm: Note
                     onStroke = vm::addStroke,
                     onTap = vm::tap,
                     modifier = Modifier.weight(1f).fillMaxWidth(),
+                    previewShape = if (state.tool in SHAPE_TOOLS) vm::shapeFor else null,
                 )
                 HorizontalDivider()
                 ToolBar(state, vm)
@@ -378,9 +382,14 @@ private fun ToolBar(state: SketchState, vm: DesignsViewModel) {
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            FilterChip(selected = state.tool == Tool.DRAW, onClick = { vm.setTool(Tool.DRAW) }, label = { Text("Draw") })
-            FilterChip(selected = state.tool == Tool.FILL, onClick = { vm.setTool(Tool.FILL) }, label = { Text("Fill") })
-            FilterChip(selected = state.tool == Tool.ERASE, onClick = { vm.setTool(Tool.ERASE) }, label = { Text("Erase") })
+            Tool.entries.forEach { tool ->
+                FilterChip(
+                    selected = state.tool == tool,
+                    onClick = { vm.setTool(tool) },
+                    label = { Text(tool.label) },
+                    modifier = Modifier.testTag("tool-${tool.name}"),
+                )
+            }
             VerticalDivider(Modifier.height(24.dp))
             FilterChip(selected = state.options.snapToGrid, onClick = vm::toggleSnap, label = { Text("Snap") })
             FilterChip(selected = state.options.straighten, onClick = vm::toggleStraighten, label = { Text("Straighten") })

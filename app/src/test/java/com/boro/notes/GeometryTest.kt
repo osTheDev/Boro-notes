@@ -95,6 +95,37 @@ class GeometryTest {
     }
 
     @Test
+    fun boxToolMakesPerfectSnappedRectangle() {
+        val shape = Geometry.box(Pt(1.2f, 0.8f), Pt(6.7f, 4.4f), emptyList(), defaults)!!
+        assertEquals(listOf(Pt(1f, 1f), Pt(7f, 1f), Pt(7f, 4f), Pt(1f, 4f)), shape.points)
+        assertTrue(shape.closed)
+        assertTrue(shape.corners.all { it })
+        assertEquals(18f, Geometry.area(shape), 0.01f)
+    }
+
+    @Test
+    fun lineToolSnapsAndJoinsExistingCorners() {
+        val existing = listOf(Geometry.box(Pt(0f, 0f), Pt(4f, 4f), emptyList(), defaults)!!)
+        val shape = Geometry.line(Pt(4.4f, 3.7f), Pt(9.2f, 3.9f), existing, defaults)!!
+        assertEquals(listOf(Pt(4f, 4f), Pt(9f, 4f)), shape.points)
+    }
+
+    @Test
+    fun ovalFitsItsBoxAndCanBeFilled() {
+        val shape = Geometry.oval(Pt(0f, 0f), Pt(8f, 4f), defaults)!!
+        assertTrue(shape.closed)
+        assertEquals(0f, shape.points.minOf { it.x }, 0.01f)
+        assertEquals(8f, shape.points.maxOf { it.x }, 0.01f)
+        assertEquals(0, Geometry.fillTarget(listOf(shape), Pt(4f, 2f)))
+        assertNull(Geometry.fillTarget(listOf(shape), Pt(0.3f, 0.3f)))
+    }
+
+    @Test
+    fun flatBoxIsIgnored() {
+        assertNull(Geometry.box(Pt(1f, 1f), Pt(5f, 1.2f), emptyList(), defaults))
+    }
+
+    @Test
     fun tinyStrokeIsIgnored() {
         assertNull(Geometry.recognize(listOf(Pt(1f, 1f), Pt(1.1f, 1.05f)), emptyList(), defaults))
     }
