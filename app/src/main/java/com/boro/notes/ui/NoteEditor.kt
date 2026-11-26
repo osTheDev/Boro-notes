@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -53,6 +52,13 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.Key
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
@@ -83,6 +89,7 @@ const val TAG_FORMAT_BAR = "formatBar"
 const val TAG_NOTE_TABLE = "noteTable"
 const val TAG_NOTE_COLUMNS = "noteColumns"
 const val TAG_NOTE_CHECK = "noteCheck"
+const val TAG_NOTE_BLANK = "noteBlank"
 
 private val TEXT_COLORS = listOf(
     "Red" to Color(0xFFE53935),
@@ -177,6 +184,49 @@ private class DocEditor(initial: NoteDoc) {
         update(doc.insertAfter(focusedBlockId, block))
         if (keyboard) pendingFocus = focusKey else focused = focusKey
     }
+
+    /** Where typing continues at the end of [b], or null for a block you can't type in. */
+    fun endKey(b: Block): String? = when (b) {
+        is TextBlock, is CheckBlock -> b.id
+        is ColumnsBlock -> "${b.id}#${b.columns.lastIndex}"
+        is TableBlock -> "${b.id}@${b.rowCount - 1},${b.columnCount - 1}"
+        is DividerBlock -> null
+    }
+
+    /** Moves the cursor (and keyboard) to the end of [key]. */
+    fun focusEnd(key: String) {
+        rich[key]?.let { it.selection = TextRange(it.annotatedString.text.length) }
+        pendingFocus = key
+    }
+
+    /** Tapping the blank space under the note: continue typing on the last line. */
+    fun focusLast() {
+        doc.blocks.lastOrNull()?.let(::endKey)?.let(::focusEnd)
+    }
+
+    /**
+     * Backspace in an empty line or checklist item: the blank goes away and the cursor moves to
+     * the end of what's above. Right under a divider, the divider goes instead.
+     * Returns false when there's nothing to remove, so the key is handled as usual.
+     */
+    fun backspaceEmpty(b: Block): Boolean {
+        val i = doc.indexOf(b.id)
+        if (i <= 0) return false
+        val above = doc.blocks[i - 1]
+        if (above is DividerBlock) {
+            update(doc.remove(above.id))
+            return true
+        }
+        val target = doc.blocks.take(i).asReversed().firstNotNullOfOrNull(::endKey) ?: return false
+        val isLast = i == doc.blocks.lastIndex
+        // The last line under a table or columns is always kept, so there's somewhere to type.
+        if (!(isLast && b is TextBlock && above !is TextBlock)) {
+            update(doc.remove(b.id))
+            rich.remove(b.id)
+        }
+        focusEnd(target)
+        return true
+    }
 }
 
 @OptIn(FlowPreview::class)
@@ -223,7 +273,14 @@ private fun NoteEditorContent(note: EditorState, onChange: (String, String) -> U
                     }
                 }
             }
-            Spacer(Modifier.height(80.dp))
+            // Blank space under the note: tap it to keep typing on the last line.
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(200.dp)
+                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { editor.focusLast() }
+                    .testTag(TAG_NOTE_BLANK)
+            )
         }
         FormattingBar(editor)
     }
@@ -257,13 +314,24 @@ private fun richTextStyle(kind: TextKind): TextStyle {
 }
 
 @Composable
-private fun RichArea(editor: DocEditor, key: String, style: TextStyle, placeholder: String?, modifier: Modifier = Modifier) {
+private fun RichArea(
+    editor: DocEditor,
+    key: String,
+    style: TextStyle,
+    placeholder: String?,
+    modifier: Modifier = Modifier,
+    /** Called on backspace while the area is empty; return true if handled. */
+    onEmptyBackspace: (() -> Boolean)? = null,
+) {
     val state = editor.rich[key] ?: return
     BasicRichTextEditor(
         state = state,
         textStyle = style,
         cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-        modifier = modifier.fillMaxWidth().trackFocus(editor, key),
+        modifier = modifier
+            .fillMaxWidth()
+            .onEmptyBackspace({ state.annotatedString.text.isEmpty() }, onEmptyBackspace)
+            .trackFocus(editor, key),
         decorationBox = { inner ->
             Box {
                 if (placeholder != null && state.annotatedString.text.isEmpty()) {
@@ -284,12 +352,13 @@ private fun TextBlockView(editor: DocEditor, block: TextBlock, placeholder: Bool
         val bar = MaterialTheme.colorScheme.primary
         RichArea(
             editor, block.id, style, hint,
-            Modifier
+            onEmptyBackspace = { editor.backspaceEmpty(editor.latest(block)) },
+            modifier = Modifier
                 .drawBehind { drawRect(bar, size = Size(3.dp.toPx(), size.height)) }
                 .padding(start = 15.dp),
         )
     } else {
-        RichArea(editor, block.id, style, hint)
+        RichArea(editor, block.id, style, hint, onEmptyBackspace = { editor.backspaceEmpty(editor.latest(block)) })
     }
 }
 
@@ -314,10 +383,19 @@ private fun CheckBlockView(editor: DocEditor, block: CheckBlock) {
                 // Enter adds the next checklist item.
                 editor.insert(CheckBlock(NoteDoc.newId()), keyboard = true)
             }),
-            modifier = Modifier.weight(1f).trackFocus(editor, block.id),
+            modifier = Modifier
+                .weight(1f)
+                .onEmptyBackspace({ editor.latest(block).text.isEmpty() }) { editor.backspaceEmpty(editor.latest(block)) }
+                .trackFocus(editor, block.id),
         )
     }
 }
+
+/** Runs [onBackspace] when backspace is pressed while [isEmpty]; other keys pass through. */
+private fun Modifier.onEmptyBackspace(isEmpty: () -> Boolean, onBackspace: (() -> Boolean)?): Modifier =
+    if (onBackspace == null) this else onPreviewKeyEvent { e ->
+        e.type == KeyEventType.KeyDown && e.key == Key.Backspace && isEmpty() && onBackspace()
+    }
 
 @Composable
 private fun TableBlockView(editor: DocEditor, block: TableBlock, wide: Boolean) {

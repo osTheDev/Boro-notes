@@ -1,6 +1,13 @@
 package com.boro.notes
 
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.performKeyInput
+import androidx.compose.ui.test.pressKey
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.isFocused
 import androidx.compose.ui.test.onNodeWithText
@@ -21,6 +28,8 @@ import com.boro.notes.ui.TAG_NOTE_PREFIX
 import com.boro.notes.ui.TAG_TITLE
 import com.boro.notes.ui.TAG_FORMAT_BAR
 import com.boro.notes.ui.TAG_FORMAT_INSERT
+import com.boro.notes.ui.TAG_NOTE_BLANK
+import com.boro.notes.ui.TAG_NOTE_CHECK
 import com.boro.notes.ui.TAG_NOTE_COLUMNS
 import com.boro.notes.ui.TAG_NOTE_TABLE
 import org.junit.Assert.assertEquals
@@ -138,6 +147,31 @@ class CoverRichNoteLayoutTest {
         assertEquals(first.top, second.top)
         assertTrue(second.left > first.left)
         rule.onNode(isFocused()).assertDoesNotExist()
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun backspaceClearsEmptyChecklistItemAndBlankSpaceFocusesNote() {
+        val vm = NotesViewModel(FakeNoteRepository(listOf(Note(id = 1, title = "Pockets", body = "scoop"))), SavedStateHandle())
+        vm.open(1)
+        rule.setContent { NotesScreen(vm) }
+        rule.waitForIdle()
+
+        rule.onNodeWithTag("format-lists").performClick()
+        rule.onNodeWithTag("insert-check").performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag(TAG_NOTE_CHECK).assertExists()
+
+        val checkField = rule.onNode(hasSetTextAction() and hasAnyAncestor(hasTestTag(TAG_NOTE_CHECK)))
+        checkField.performClick()
+        rule.waitForIdle()
+        checkField.performKeyInput { pressKey(Key.Backspace) }
+        rule.waitForIdle()
+        rule.onNodeWithTag(TAG_NOTE_CHECK).assertDoesNotExist()
+
+        rule.onNodeWithTag(TAG_NOTE_BLANK).performClick()
+        rule.waitForIdle()
+        rule.onNode(isFocused()).assertExists()
     }
 }
 
