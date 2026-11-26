@@ -1,0 +1,75 @@
+name: Build and publish APK
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      BUILD_NUMBER: ${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Unit and layout tests
+        run: ./gradlew testDebugUnitTest --stacktrace
+
+      - name: Build APK
+        run: ./gradlew assembleDebug --stacktrace
+
+      - name: Rename APK
+        run: cp app/build/outputs/apk/debug/app-debug.apk "boro-notes-${BUILD_NUMBER}.apk"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: boro-notes-apk
+          path: boro-notes-*.apk
+
+      - name: Upload test report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report
+          path: app/build/reports/tests/
+
+      # Pushes to main: a new release you can install from your phone.
+      - name: Publish release
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "build-${BUILD_NUMBER}" boro-notes-${BUILD_NUMBER}.apk \
+            --title "Boro Notes build ${BUILD_NUMBER}" \
+            --notes "Installable build of ${GITHUB_SHA::7}. Tap the .apk below on your phone to install." \
+            --latest
+
+      # Pull requests: a test build that's replaced on every push to the PR.
+      - name: Publish PR test build
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          gh release delete "pr-${PR}" --yes --cleanup-tag || true
+          gh release create "pr-${PR}" boro-notes-${BUILD_NUMBER}.apk \
+            --target "${{ github.event.pull_request.head.sha }}" \
+            --title "Test build for PR #${PR}" \
+            --notes "Test build for pull request #${PR}. Tap the .apk below to install." \
+            --prerelease --latest=false

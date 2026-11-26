@@ -1,0 +1,3 @@
+<resources>
+    <style name="Theme.BoroNotes" parent="android:Theme.Material.NoActionBar" />
+</resources>
