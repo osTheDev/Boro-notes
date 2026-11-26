@@ -4,7 +4,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTextReplacement
 import androidx.lifecycle.SavedStateHandle
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.boro.notes.data.Note
@@ -68,7 +68,7 @@ class InnerScreenLayoutTest {
         rule.onNodeWithTag(TAG_EDITOR_PANE).assertIsDisplayed()
         rule.onNodeWithTag(TAG_BACK).assertDoesNotExist()
 
-        rule.onNodeWithTag(TAG_TITLE).performTextInput(" shirt")
+        rule.onNodeWithTag(TAG_TITLE).performTextReplacement("Tee shirt")
         rule.waitForIdle()
         assertEquals("Tee shirt", vm.editor.value!!.title)
     }
