@@ -21,7 +21,14 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 /** The note currently open in the editor, including edits not yet written to the database. */
-data class EditorState(val id: Long, val title: String, val body: String)
+data class EditorState(
+    val id: Long,
+    val title: String,
+    /** Plain text, for search and previews. */
+    val body: String,
+    /** Formatted content as JSON (see [com.boro.notes.notes.NoteDoc]). */
+    val content: String? = null,
+)
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class NotesViewModel(
@@ -57,6 +64,7 @@ class NotesViewModel(
                     id = id,
                     title = savedState.get<String>(KEY_DRAFT_TITLE) ?: note.title,
                     body = savedState.get<String>(KEY_DRAFT_BODY) ?: note.body,
+                    content = savedState.get<String>(KEY_DRAFT_CONTENT) ?: note.content,
                 )
             }
         }
@@ -71,7 +79,7 @@ class NotesViewModel(
         leaveCurrent()
         viewModelScope.launch {
             val note = repository.get(id) ?: return@launch
-            setEditor(EditorState(note.id, note.title, note.body))
+            setEditor(EditorState(note.id, note.title, note.body, note.content))
         }
     }
 
@@ -99,7 +107,10 @@ class NotesViewModel(
 
     fun onTitleChange(value: String) = edit { it.copy(title = value) }
 
-    fun onBodyChange(value: String) = edit { it.copy(body = value) }
+    fun onBodyChange(value: String) = edit { it.copy(body = value, content = null) }
+
+    /** The formatted editor changed: [content] is the document JSON, [plain] its text. */
+    fun onDocChange(content: String, plain: String) = edit { it.copy(body = plain, content = content) }
 
     /** Writes pending edits immediately (on close, switching notes, or the app going to the background). */
     /** Saves the open note, or deletes it if it was left completely blank, to keep the list tidy. */
@@ -118,7 +129,7 @@ class NotesViewModel(
         val current = _editor.value ?: return
         saveJob?.cancel()
         saveJob = null
-        viewModelScope.launch { repository.save(current.id, current.title, current.body) }
+        viewModelScope.launch { repository.save(current.id, current.title, current.body, current.content) }
     }
 
     private fun edit(transform: (EditorState) -> EditorState) {
@@ -126,10 +137,11 @@ class NotesViewModel(
         _editor.value = updated
         savedState[KEY_DRAFT_TITLE] = updated.title
         savedState[KEY_DRAFT_BODY] = updated.body
+        savedState[KEY_DRAFT_CONTENT] = updated.content
         saveJob?.cancel()
         saveJob = viewModelScope.launch {
             delay(AUTOSAVE_DELAY_MS)
-            repository.save(updated.id, updated.title, updated.body)
+            repository.save(updated.id, updated.title, updated.body, updated.content)
         }
     }
 
@@ -138,6 +150,7 @@ class NotesViewModel(
         savedState[KEY_OPEN_ID] = state.id
         savedState[KEY_DRAFT_TITLE] = state.title
         savedState[KEY_DRAFT_BODY] = state.body
+        savedState[KEY_DRAFT_CONTENT] = state.content
     }
 
     private fun clearOpen() {
@@ -145,6 +158,7 @@ class NotesViewModel(
         savedState.remove<Long>(KEY_OPEN_ID)
         savedState.remove<String>(KEY_DRAFT_TITLE)
         savedState.remove<String>(KEY_DRAFT_BODY)
+        savedState.remove<String>(KEY_DRAFT_CONTENT)
     }
 
     companion object {
@@ -153,6 +167,7 @@ class NotesViewModel(
         private const val KEY_OPEN_ID = "openId"
         private const val KEY_DRAFT_TITLE = "draftTitle"
         private const val KEY_DRAFT_BODY = "draftBody"
+        private const val KEY_DRAFT_CONTENT = "draftContent"
 
         fun factory(repository: NoteRepository): ViewModelProvider.Factory = viewModelFactory {
             initializer { NotesViewModel(repository, createSavedStateHandle()) }

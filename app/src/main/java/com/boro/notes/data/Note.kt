@@ -7,7 +7,10 @@ import androidx.room.PrimaryKey
 data class Note(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val title: String = "",
+    /** Plain text of the note, for search and previews. */
     val body: String = "",
+    /** The formatted note as JSON (see [com.boro.notes.notes.NoteDoc]); null for notes from before formatting. */
+    val content: String? = null,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = createdAt,
 )

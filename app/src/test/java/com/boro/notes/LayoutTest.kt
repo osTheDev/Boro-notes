@@ -16,7 +16,12 @@ import com.boro.notes.ui.TAG_EMPTY_DETAIL
 import com.boro.notes.ui.TAG_LIST_PANE
 import com.boro.notes.ui.TAG_NOTE_PREFIX
 import com.boro.notes.ui.TAG_TITLE
+import com.boro.notes.ui.TAG_FORMAT_BAR
+import com.boro.notes.ui.TAG_FORMAT_INSERT
+import com.boro.notes.ui.TAG_NOTE_COLUMNS
+import com.boro.notes.ui.TAG_NOTE_TABLE
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -71,6 +76,40 @@ class InnerScreenLayoutTest {
         rule.onNodeWithTag(TAG_TITLE).performTextReplacement("Tee shirt")
         rule.waitForIdle()
         assertEquals("Tee shirt", vm.editor.value!!.title)
+    }
+}
+
+/** Rich notes: the formatting bar inserts tables and columns, which are saved with the note. */
+@RunWith(AndroidJUnit4::class)
+@Config(sdk = [34], qualifiers = "w700dp-h780dp")
+class RichNoteLayoutTest {
+    @get:Rule val rule = createComposeRule()
+
+    @Test
+    fun insertsTableAndColumns() {
+        val repo = FakeNoteRepository(listOf(Note(id = 1, title = "Pockets", body = "scoop")))
+        val vm = NotesViewModel(repo, SavedStateHandle())
+        vm.open(1)
+        rule.setContent { NotesScreen(vm) }
+        rule.waitForIdle()
+
+        rule.onNodeWithTag(TAG_FORMAT_BAR).assertIsDisplayed()
+        rule.onNodeWithTag(TAG_FORMAT_INSERT).performClick()
+        rule.onNodeWithTag("insert-table").performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag(TAG_NOTE_TABLE).assertExists()
+
+        rule.onNodeWithTag(TAG_FORMAT_INSERT).performClick()
+        rule.onNodeWithTag("insert-columns").performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag(TAG_NOTE_COLUMNS).assertExists()
+
+        // Edits are debounced before reaching the view model.
+        rule.mainClock.advanceTimeBy(1_000)
+        rule.waitForIdle()
+        val content = vm.editor.value!!.content
+        assertTrue("content was $content", content != null && content.contains("\"table\"") && content.contains("\"columns\""))
+        assertEquals("scoop", vm.editor.value!!.body.lineSequence().first())
     }
 }
 

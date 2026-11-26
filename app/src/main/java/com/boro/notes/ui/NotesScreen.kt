@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -206,7 +207,9 @@ internal fun EditorPane(
             )
         },
     ) { padding ->
-        Column(Modifier.padding(padding).fillMaxSize()) {
+        BoxWithConstraints(Modifier.padding(padding).fillMaxSize().imePadding()) {
+        val wide = maxWidth >= TWO_PANE_MIN_WIDTH
+        Column(Modifier.fillMaxSize()) {
             TextField(
                 value = state.title,
                 onValueChange = vm::onTitleChange,
@@ -216,13 +219,13 @@ internal fun EditorPane(
                 colors = plain,
                 modifier = Modifier.fillMaxWidth().testTag(TAG_TITLE),
             )
-            TextField(
-                value = state.body,
-                onValueChange = vm::onBodyChange,
-                placeholder = { Text("Start writing") },
-                colors = plain,
+            NoteEditor(
+                note = state,
+                onChange = vm::onDocChange,
+                wide = wide,
                 modifier = Modifier.fillMaxWidth().weight(1f).testTag(TAG_BODY),
             )
+        }
         }
     }
 }
