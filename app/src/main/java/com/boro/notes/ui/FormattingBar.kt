@@ -116,7 +116,14 @@ private val HIGHLIGHTS = listOf(
  * second row for the selected table, columns or other block. Collapses to a small Format button.
  */
 @Composable
-internal fun FormattingBar(editor: DocEditor) {
+internal fun FormattingBar(
+    editor: DocEditor,
+    /** On the inner screen the bar sits at the top and doubles as the app bar. */
+    atTop: Boolean = false,
+    /** App bar items around the tools when [atTop] (back button; full screen, delete). */
+    start: @Composable () -> Unit = {},
+    end: @Composable () -> Unit = {},
+) {
     val focusManager = LocalFocusManager.current
     var open by rememberSaveable { mutableStateOf(true) }
     val rich = editor.activeRich
@@ -130,30 +137,45 @@ internal fun FormattingBar(editor: DocEditor) {
         editor.insert(block, focusKey)
     }
 
-    Surface(tonalElevation = 3.dp, shadowElevation = 6.dp, modifier = Modifier.fillMaxWidth().testTag(TAG_FORMAT_BAR)) {
-        if (!open) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.End) {
-                Row(
-                    Modifier
-                        .clip(RoundedCornerShape(50))
-                        .background(cs.primaryContainer)
-                        .clickable { open = true }
-                        .padding(horizontal = 14.dp, vertical = 8.dp)
-                        .testTag("format-show"),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Icon(Icons.Filled.TextFormat, contentDescription = null, tint = cs.onPrimaryContainer)
-                    Spacer(Modifier.width(6.dp))
-                    Text("Format", color = cs.onPrimaryContainer, style = MaterialTheme.typography.labelLarge)
-                }
-            }
-            return@Surface
+    val showPill: @Composable () -> Unit = {
+        Row(
+            Modifier
+                .clip(RoundedCornerShape(50))
+                .background(cs.primaryContainer)
+                .clickable { open = true }
+                .padding(horizontal = 14.dp, vertical = 8.dp)
+                .testTag("format-show"),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(Icons.Filled.TextFormat, contentDescription = null, tint = cs.onPrimaryContainer)
+            Spacer(Modifier.width(6.dp))
+            Text("Format", color = cs.onPrimaryContainer, style = MaterialTheme.typography.labelLarge)
         }
-        Column {
-            if (focusedBlock != null && focusedBlock !is TextBlock) {
-                BlockToolsRow(editor, focusedBlock)
-                HorizontalDivider(color = cs.outlineVariant.copy(alpha = 0.5f))
-            }
+    }
+    val blockRow: @Composable () -> Unit = {
+        if (open && focusedBlock != null && focusedBlock !is TextBlock) {
+            if (atTop) HorizontalDivider(color = cs.outlineVariant.copy(alpha = 0.5f))
+            BlockToolsRow(editor, focusedBlock)
+            if (!atTop) HorizontalDivider(color = cs.outlineVariant.copy(alpha = 0.5f))
+        }
+    }
+
+    Surface(
+        tonalElevation = 3.dp,
+        shadowElevation = if (atTop) 2.dp else 6.dp,
+        modifier = Modifier.fillMaxWidth().testTag(TAG_FORMAT_BAR),
+    ) {
+      Column {
+        if (!atTop) blockRow()
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+          start()
+          Box(Modifier.weight(1f)) {
+            if (!open) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+                    horizontalArrangement = if (atTop) Arrangement.Start else Arrangement.End,
+                ) { showPill() }
+            } else {
             Row(
                 Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp, vertical = 6.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -250,7 +272,12 @@ internal fun FormattingBar(editor: DocEditor) {
                 }
                 ToolButton(Icons.Filled.KeyboardArrowDown, "Hide formatting", "format-hide") { open = false }
             }
+            }
+          }
+          end()
         }
+        if (atTop) blockRow()
+      }
     }
 }
 

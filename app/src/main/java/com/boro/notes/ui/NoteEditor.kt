@@ -118,10 +118,14 @@ fun NoteEditor(
     modifier: Modifier = Modifier,
     /** Shown above the body on the same paper (the title field). */
     header: @Composable () -> Unit = {},
+    /** Put the formatting bar at the top, holding [barStart] and [barEnd] (inner screen). */
+    toolbarAtTop: Boolean = false,
+    barStart: @Composable () -> Unit = {},
+    barEnd: @Composable () -> Unit = {},
 ) {
     // The editor owns the document once a note is open; reload only when another note opens.
     key(note.id) {
-        NoteEditorContent(note, onChange, wide, modifier, header)
+        NoteEditorContent(note, onChange, wide, modifier, header, toolbarAtTop, barStart, barEnd)
     }
 }
 
@@ -245,6 +249,9 @@ private fun NoteEditorContent(
     wide: Boolean,
     modifier: Modifier,
     header: @Composable () -> Unit,
+    toolbarAtTop: Boolean,
+    barStart: @Composable () -> Unit,
+    barEnd: @Composable () -> Unit,
 ) {
     val editor = remember { DocEditor(NoteDoc.load(note.content, note.body)) }
     val latestOnChange by rememberUpdatedState(onChange)
@@ -269,6 +276,7 @@ private fun NoteEditorContent(
     val paper = editor.doc.paper
     val lined = paper.pattern != PaperPattern.PLAIN
     Column(modifier) {
+        if (toolbarAtTop) FormattingBar(editor, atTop = true, start = barStart, end = barEnd)
         PaperTheme(paper) {
           // The page is at least as tall as the screen, so paper and lines always reach the bottom.
           BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
@@ -316,7 +324,7 @@ private fun NoteEditorContent(
             }
           }
         }
-        FormattingBar(editor)
+        if (!toolbarAtTop) FormattingBar(editor)
     }
 }
 
