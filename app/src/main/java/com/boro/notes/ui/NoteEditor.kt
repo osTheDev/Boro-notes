@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -49,6 +50,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalFocusManager
@@ -277,10 +280,14 @@ private fun TextBlockView(editor: DocEditor, block: TextBlock, placeholder: Bool
     val style = richTextStyle(block.kind)
     val hint = if (placeholder) "Start writing" else null
     if (block.kind == TextKind.QUOTE) {
-        Row(Modifier.height(IntrinsicSize.Min)) {
-            Box(Modifier.width(3.dp).fillMaxHeight().background(MaterialTheme.colorScheme.primary, RoundedCornerShape(2.dp)))
-            RichArea(editor, block.id, style, hint, Modifier.padding(start = 12.dp))
-        }
+        // Bar drawn behind rather than measured, so the rich editor never gets intrinsic measuring.
+        val bar = MaterialTheme.colorScheme.primary
+        RichArea(
+            editor, block.id, style, hint,
+            Modifier
+                .drawBehind { drawRect(bar, size = Size(3.dp.toPx(), size.height)) }
+                .padding(start = 15.dp),
+        )
     } else {
         RichArea(editor, block.id, style, hint)
     }
@@ -357,12 +364,13 @@ private fun ColumnsBlockView(editor: DocEditor, block: ColumnsBlock, wide: Boole
     val frame = Modifier
         .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp))
         .padding(if (wide) 10.dp else 6.dp)
+    // No intrinsic height here: the rich text editor keeps re-laying out under intrinsic measuring.
     Row(
-        Modifier.fillMaxWidth().height(IntrinsicSize.Min).testTag(TAG_NOTE_COLUMNS),
+        Modifier.fillMaxWidth().testTag(TAG_NOTE_COLUMNS),
         horizontalArrangement = Arrangement.spacedBy(gap),
     ) {
         block.columns.indices.forEach { i ->
-            Box(Modifier.weight(1f).fillMaxHeight().then(frame)) {
+            Box(Modifier.weight(1f).heightIn(min = 96.dp).then(frame)) {
                 RichArea(editor, "${block.id}#$i", style, "Column ${i + 1}")
             }
         }
