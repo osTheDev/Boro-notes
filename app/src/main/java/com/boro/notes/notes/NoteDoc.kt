@@ -38,6 +38,20 @@ enum class PaperColor(val label: String, val argb: Long?, val dark: Boolean = fa
     CHARCOAL("Charcoal", 0xFF262626, dark = true),
 }
 
+/** Solid fill for tables and columns, hiding the paper's lines. [argb] null uses the paper's own colour. */
+@Serializable
+enum class BoxFill(val label: String, val argb: Long?) {
+    PAPER("Paper", null),
+    WHITE("White", 0xFFFFFFFF),
+    CREAM("Cream", 0xFFFFF6DD),
+    BUTTER("Butter", 0xFFFFEDA8),
+    KRAFT("Kraft", 0xFFE9D7B5),
+    SAGE("Sage", 0xFFDDE8D3),
+    SKY("Sky", 0xFFD8E7F5),
+    BLUSH("Blush", 0xFFF7DCD7),
+    LILAC("Lilac", 0xFFE6DDF3),
+}
+
 @Serializable
 enum class PaperPattern(val label: String) {
     PLAIN("Plain"),
@@ -141,7 +155,7 @@ data class CheckBlock(override val id: String, val text: String = "", val checke
 
 @Serializable
 @SerialName("table")
-data class TableBlock(override val id: String, val rows: List<List<String>>) : Block {
+data class TableBlock(override val id: String, val rows: List<List<String>>, val fill: BoxFill? = null) : Block {
     val rowCount get() = rows.size
     val columnCount get() = rows.maxOfOrNull { it.size } ?: 0
 
@@ -166,7 +180,7 @@ data class TableBlock(override val id: String, val rows: List<List<String>>) : B
 /** Side-by-side rich text columns (stacked on the cover screen). */
 @Serializable
 @SerialName("columns")
-data class ColumnsBlock(override val id: String, val columns: List<String>) : Block
+data class ColumnsBlock(override val id: String, val columns: List<String>, val fill: BoxFill? = null) : Block
 
 @Serializable
 @SerialName("divider")

@@ -151,6 +151,26 @@ class NotePaperLayoutTest {
         assertTrue(content, content.contains("KRAFT") && content.contains("RULED") && content.contains("\"margin\":true"))
         rule.onNodeWithTag(TAG_TITLE).assertIsDisplayed()
     }
+
+    @Test
+    fun columnsTakeAFill() {
+        val vm = NotesViewModel(FakeNoteRepository(listOf(Note(id = 1, title = "Plan", body = "x"))), SavedStateHandle())
+        vm.open(1)
+        rule.setContent { NotesScreen(vm) }
+        rule.waitForIdle()
+
+        rule.onNodeWithTag(TAG_FORMAT_INSERT).performClick()
+        rule.onNodeWithTag("insert-columns").performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag("format-fill").performClick()
+        rule.onNodeWithTag("fill-sage").performScrollTo().performClick()
+        rule.waitForIdle()
+        rule.mainClock.advanceTimeBy(1_000)
+        rule.waitForIdle()
+
+        val content = vm.editor.value!!.content.orEmpty()
+        assertTrue(content, content.contains("\"fill\":\"SAGE\""))
+    }
 }
 
 /** Cover screen: columns stay side by side, and inserting doesn't open the keyboard. */

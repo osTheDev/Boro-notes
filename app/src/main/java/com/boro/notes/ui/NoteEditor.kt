@@ -83,6 +83,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.max
 import com.boro.notes.notes.Block
+import com.boro.notes.notes.BoxFill
 import com.boro.notes.notes.CheckBlock
 import com.boro.notes.notes.ColumnsBlock
 import com.boro.notes.notes.DividerBlock
@@ -436,6 +437,8 @@ private fun RichArea(
     modifier: Modifier = Modifier,
     /** Called on backspace while the area is empty; return true if handled. */
     onEmptyBackspace: (() -> Boolean)? = null,
+    /** Space inside the field (still tappable), e.g. for boxed columns. */
+    contentPadding: Dp = 0.dp,
 ) {
     val state = editor.rich[key] ?: return
     // Keep the cursor on screen while typing: the page scrolls as text grows past the bottom.
@@ -463,7 +466,7 @@ private fun RichArea(
             .onEmptyBackspace({ state.annotatedString.text.isEmpty() }, onEmptyBackspace)
             .trackFocus(editor, key),
         decorationBox = { inner ->
-            Box {
+            Box(Modifier.padding(contentPadding)) {
                 if (placeholder != null && state.annotatedString.text.isEmpty()) {
                     Text(placeholder, style = style.copy(color = MaterialTheme.colorScheme.onSurfaceVariant))
                 }
@@ -529,6 +532,7 @@ private fun Modifier.onEmptyBackspace(isEmpty: () -> Boolean, onBackspace: (() -
 
 @Composable
 private fun TableBlockView(editor: DocEditor, block: TableBlock, wide: Boolean) {
+  FillTheme(block.fill) { fillColor ->
     val line = MaterialTheme.colorScheme.outlineVariant
     BoxWithConstraints(Modifier.fillMaxWidth().testTag(TAG_NOTE_TABLE)) {
         val cols = block.columnCount.coerceAtLeast(1)
@@ -536,6 +540,7 @@ private fun TableBlockView(editor: DocEditor, block: TableBlock, wide: Boolean) 
         Column(
             Modifier
                 .horizontalScroll(rememberScrollState())
+                .background(fillColor, RoundedCornerShape(6.dp))
                 .border(1.dp, line, RoundedCornerShape(6.dp))
         ) {
             block.rows.forEachIndexed { r, row ->
@@ -549,17 +554,47 @@ private fun TableBlockView(editor: DocEditor, block: TableBlock, wide: Boolean) 
                                 fontWeight = if (r == 0) FontWeight.SemiBold else FontWeight.Normal,
                             ),
                             cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                            // Padding inside the field, so a tap anywhere in the cell lands in it.
+                            decorationBox = { inner -> Box(Modifier.fillMaxSize().padding(8.dp)) { inner() } },
                             modifier = Modifier
                                 .width(cellWidth)
                                 .fillMaxHeight()
+                                .heightIn(min = 40.dp)
                                 .background(if (r == 0) MaterialTheme.colorScheme.surfaceContainerHigh else Color.Transparent)
                                 .border(0.5.dp, line)
-                                .padding(8.dp)
                                 .trackFocus(editor, "${block.id}@$r,$c"),
                         )
                     }
                 }
             }
+        }
+    }
+  }
+}
+
+/**
+ * Gives a table or columns block its fill: null keeps it see-through (paper lines show), a fill
+ * paints it solid. Light fills switch to dark text so it stays readable on dark paper.
+ */
+@Composable
+private fun FillTheme(fill: BoxFill?, content: @Composable (Color) -> Unit) {
+    val argb = fill?.argb
+    when {
+        fill == null -> content(Color.Transparent)
+        argb == null -> content(MaterialTheme.colorScheme.surface)
+        else -> {
+            val ink = Color(0xFF1F1B16)
+            MaterialTheme(
+                colorScheme = MaterialTheme.colorScheme.copy(
+                    surface = Color(argb),
+                    onSurface = ink,
+                    onSurfaceVariant = ink.copy(alpha = 0.6f),
+                    outline = ink.copy(alpha = 0.45f),
+                    outlineVariant = ink.copy(alpha = 0.25f),
+                    surfaceContainerHigh = ink.copy(alpha = 0.07f),
+                    primary = Color(0xFF3B5BA9),
+                ),
+            ) { content(Color(argb)) }
         }
     }
 }
@@ -569,17 +604,24 @@ private fun ColumnsBlockView(editor: DocEditor, block: ColumnsBlock, wide: Boole
     val style = richTextStyle(TextKind.BODY)
     // Columns stay side by side on both screens; the cover screen just uses tighter gaps.
     val gap = if (wide) 10.dp else 6.dp
-    val frame = Modifier
-        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp))
-        .padding(if (wide) 10.dp else 6.dp)
-    // No intrinsic height here: the rich text editor keeps re-laying out under intrinsic measuring.
-    Row(
-        Modifier.fillMaxWidth().testTag(TAG_NOTE_COLUMNS),
-        horizontalArrangement = Arrangement.spacedBy(gap),
-    ) {
-        block.columns.indices.forEach { i ->
-            Box(Modifier.weight(1f).heightIn(min = 96.dp).then(frame)) {
-                RichArea(editor, "${block.id}#$i", style, "Column ${i + 1}")
+    val shape = RoundedCornerShape(8.dp)
+    FillTheme(block.fill) { fillColor ->
+        // No intrinsic height here: the rich text editor keeps re-laying out under intrinsic measuring.
+        Row(
+            Modifier.fillMaxWidth().testTag(TAG_NOTE_COLUMNS),
+            horizontalArrangement = Arrangement.spacedBy(gap),
+        ) {
+            block.columns.indices.forEach { i ->
+                // The whole box is the text field, so a tap anywhere in it starts typing.
+                RichArea(
+                    editor, "${block.id}#$i", style, "Column ${i + 1}",
+                    modifier = Modifier
+                        .weight(1f)
+                        .heightIn(min = 96.dp)
+                        .background(fillColor, shape)
+                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, shape),
+                    contentPadding = if (wide) 10.dp else 6.dp,
+                )
             }
         }
     }
@@ -774,6 +816,36 @@ private fun FormattingBar(editor: DocEditor) {
                     onClick = { set(paper.copy(margin = !paper.margin)) },
                     modifier = Modifier.testTag("paper-margin"),
                 )
+            }
+            if (focusedBlock is TableBlock || focusedBlock is ColumnsBlock) {
+                FormatMenu("Fill", "format-fill") { close ->
+                    fun set(fill: BoxFill?) {
+                        val b = editor.latest(focusedBlock)
+                        editor.update(editor.doc.replace(if (b is TableBlock) b.copy(fill = fill) else (b as ColumnsBlock).copy(fill = fill)))
+                        close()
+                    }
+                    val current = (focusedBlock as? TableBlock)?.fill ?: (focusedBlock as? ColumnsBlock)?.fill
+                    DropdownMenuItem(
+                        text = { Text("No fill (show lines)") },
+                        trailingIcon = { if (current == null) Text("✓") },
+                        onClick = { set(null) },
+                    )
+                    BoxFill.entries.forEach { f ->
+                        DropdownMenuItem(
+                            text = { Text(f.label) },
+                            leadingIcon = {
+                                Box(
+                                    Modifier.size(18.dp)
+                                        .background(f.argb?.let { Color(it) } ?: MaterialTheme.colorScheme.surface, RoundedCornerShape(4.dp))
+                                        .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(4.dp))
+                                )
+                            },
+                            trailingIcon = { if (current == f) Text("✓") },
+                            onClick = { set(f) },
+                            modifier = Modifier.testTag("fill-${f.name.lowercase()}"),
+                        )
+                    }
+                }
             }
             if (focusedBlock is TableBlock) {
                 val (r, c) = editor.focused!!.substringAfter('@').split(',').map { it.toIntOrNull() ?: 0 }.let { it[0] to it.getOrElse(1) { 0 } }
