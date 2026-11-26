@@ -243,7 +243,8 @@ fun DrawScope.drawShapes(shapes: List<Shape>, ink: Color, strokeWidth: Float, to
     val stitchEffect = PathEffect.dashPathEffect(floatArrayOf(0.28f * unit, 0.18f * unit))
     clipRect {
         for (shape in shapes) {
-            shape.stamp?.let { stamp ->
+            val stamp = shape.stamp
+            if (stamp != null) {
                 drawStamp(stamp, toScreen(shape.points.first()), stamp.radius * unit)
                 continue
             }
