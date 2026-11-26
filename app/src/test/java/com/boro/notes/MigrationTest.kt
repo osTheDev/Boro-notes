@@ -41,4 +41,38 @@ class MigrationTest {
             database.close()
         }
     }
+
+    @Test
+    fun version2NotesAndDesignsSurviveUpgrade() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val name = "migration-test-v2.db"
+        context.deleteDatabase(name)
+        val file = context.getDatabasePath(name).apply { parentFile?.mkdirs() }
+
+        SQLiteDatabase.openOrCreateDatabase(file, null).use { db ->
+            db.execSQL(
+                "CREATE TABLE IF NOT EXISTS `notes` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                    "`title` TEXT NOT NULL, `body` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL)"
+            )
+            db.execSQL(
+                "CREATE TABLE IF NOT EXISTS `designs` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                    "`name` TEXT NOT NULL, `stage` TEXT NOT NULL, `noteId` INTEGER, `shapes` TEXT NOT NULL, " +
+                    "`createdAt` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL)"
+            )
+            db.execSQL("INSERT INTO notes (title, body, createdAt, updatedAt) VALUES ('Pocket ideas', 'scoop pocket', 1, 1)")
+            db.execSQL("INSERT INTO designs (name, stage, noteId, shapes, createdAt, updatedAt) VALUES ('Jeans', 'IDEA', 1, '[]', 1, 1)")
+            db.version = 2
+        }
+
+        val database = NoteDatabase.create(context, name)
+        try {
+            val notes = database.noteDao().observe("").first()
+            assertEquals(listOf("Pocket ideas"), notes.map { it.title })
+            assertEquals("scoop pocket", notes.single().body)
+            assertEquals(null, notes.single().content)
+            assertEquals(listOf("Jeans"), database.designDao().observeAll().first().map { it.name })
+        } finally {
+            database.close()
+        }
+    }
 }

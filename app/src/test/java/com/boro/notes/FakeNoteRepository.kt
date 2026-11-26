@@ -27,12 +27,12 @@ class FakeNoteRepository(initial: List<Note> = emptyList()) : NoteRepository {
         return id
     }
 
-    override suspend fun save(id: Long, title: String, body: String) {
+    override suspend fun save(id: Long, title: String, body: String, content: String?) {
         val existing = get(id) ?: return
-        if (existing.title == title && existing.body == body) return
+        if (existing.title == title && existing.body == body && existing.content == content) return
         saveCount++
         notes.value = notes.value.map {
-            if (it.id == id) it.copy(title = title, body = body, updatedAt = ++clock) else it
+            if (it.id == id) it.copy(title = title, body = body, content = content, updatedAt = ++clock) else it
         }
     }
 

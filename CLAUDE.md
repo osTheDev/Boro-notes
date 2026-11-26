@@ -7,4 +7,6 @@
 - No S Pen: drawing features must work well with a finger (snap-to-grid, auto-straighten).
 - Tests: `./gradlew testDebugUnitTest` (ViewModel tests + Robolectric layout tests at cover and inner widths).
 - Sketch engine (`sketch/Geometry.kt`) is plain Kotlin: corner detection on a resampled stroke, straight runs vs smooth (Hermite) runs, grid snap on corners only, endpoint magnet. Its tests (`GeometryTest`) can run in a plain Kotlin JVM project without the Android SDK.
-- Database is version 2 (designs table). Every schema change needs a Migration plus a case in `MigrationTest`; users have real notes on their phone.
+- Database is version 3 (v2 designs table, v3 `notes.content`). Every schema change needs a Migration plus a case in `MigrationTest`; users have real notes on their phone.
+- Rich notes (`notes/NoteDoc.kt`): `notes.content` holds a JSON block list (text as HTML, checklist, table, columns, divider); `notes.body` keeps plain text for search and list previews. Null content means a legacy plain note. UI in `ui/NoteEditor.kt`; the toolbar is `ui/FormattingBar.kt`: icon tools in colour-coded groups (text, lists, insert, page) plus a second row for the selected block (fill, table rows/columns, move, delete). Paper (colour, lines, margin) lives in the doc JSON.
+- Rich text uses `richeditor-compose` pinned at 1.0.0-rc13: newer versions need Kotlin 2.4 / Compose 1.11. Don't bump it without bumping those.

@@ -47,6 +47,13 @@ android {
     }
     testOptions {
         unitTests.isIncludeAndroidResources = true
+        unitTests.all {
+            // Show assertion messages in the CI log (the report artifact is hard to open from a phone).
+            it.testLogging {
+                events("failed")
+                exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+            }
+        }
     }
 }
 
@@ -64,10 +71,12 @@ dependencies {
     implementation(libs.compose.ui.tooling.preview)
     implementation(libs.compose.material3)
     implementation(libs.compose.material.icons.core)
+    implementation(libs.compose.material.icons.extended)
     implementation(libs.room.runtime)
     implementation(libs.room.ktx)
     ksp(libs.room.compiler)
     implementation(libs.kotlinx.serialization.json)
+    implementation(libs.rich.editor)
 
     debugImplementation(libs.compose.ui.tooling)
     debugImplementation(libs.compose.ui.test.manifest)

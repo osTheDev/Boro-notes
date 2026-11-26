@@ -1,6 +1,17 @@
 package com.boro.notes
 
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.performKeyInput
+import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.pressKey
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
+import androidx.compose.ui.test.isFocused
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
@@ -16,7 +27,13 @@ import com.boro.notes.ui.TAG_EMPTY_DETAIL
 import com.boro.notes.ui.TAG_LIST_PANE
 import com.boro.notes.ui.TAG_NOTE_PREFIX
 import com.boro.notes.ui.TAG_TITLE
+import com.boro.notes.ui.TAG_FORMAT_BAR
+import com.boro.notes.ui.TAG_NOTE_BLANK
+import com.boro.notes.ui.TAG_NOTE_CHECK
+import com.boro.notes.ui.TAG_NOTE_COLUMNS
+import com.boro.notes.ui.TAG_NOTE_TABLE
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -71,6 +88,132 @@ class InnerScreenLayoutTest {
         rule.onNodeWithTag(TAG_TITLE).performTextReplacement("Tee shirt")
         rule.waitForIdle()
         assertEquals("Tee shirt", vm.editor.value!!.title)
+    }
+}
+
+/** Rich notes: the formatting bar inserts tables and columns, which are saved with the note. */
+@RunWith(AndroidJUnit4::class)
+@Config(sdk = [34], qualifiers = "w700dp-h780dp")
+class RichNoteLayoutTest {
+    @get:Rule val rule = createComposeRule()
+
+    @Test
+    fun insertsTableAndColumns() {
+        val repo = FakeNoteRepository(listOf(Note(id = 1, title = "Pockets", body = "scoop")))
+        val vm = NotesViewModel(repo, SavedStateHandle())
+        vm.open(1)
+        rule.setContent { NotesScreen(vm) }
+        rule.waitForIdle()
+
+        rule.onNodeWithTag(TAG_FORMAT_BAR).assertIsDisplayed()
+        rule.onNodeWithTag("insert-table").performScrollTo().performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag(TAG_NOTE_TABLE).assertExists()
+
+        rule.onNodeWithTag("insert-columns").performScrollTo().performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag(TAG_NOTE_COLUMNS).assertExists()
+
+        // Edits are debounced before reaching the view model.
+        rule.mainClock.advanceTimeBy(1_000)
+        rule.waitForIdle()
+        val content = vm.editor.value!!.content
+        assertTrue("content was $content", content != null && content.contains("\"table\"") && content.contains("\"columns\""))
+        assertEquals("scoop", vm.editor.value!!.body.lineSequence().first())
+    }
+}
+
+/** Note paper: colour, lines and margin are chosen from the Page menu and saved with the note. */
+@RunWith(AndroidJUnit4::class)
+@Config(sdk = [34], qualifiers = "w700dp-h780dp")
+class NotePaperLayoutTest {
+    @get:Rule val rule = createComposeRule()
+
+    @Test
+    fun pageMenuSetsPaper() {
+        val vm = NotesViewModel(FakeNoteRepository(listOf(Note(id = 1, title = "Journal", body = "hello"))), SavedStateHandle())
+        vm.open(1)
+        rule.setContent { NotesScreen(vm) }
+        rule.waitForIdle()
+
+        for (item in listOf("paper-kraft", "pattern-ruled", "paper-margin")) {
+            rule.onNodeWithTag("format-page").performScrollTo().performClick()
+            rule.onNodeWithTag(item).performScrollTo().performClick()
+            rule.waitForIdle()
+        }
+        rule.mainClock.advanceTimeBy(1_000)
+        rule.waitForIdle()
+
+        val content = vm.editor.value!!.content.orEmpty()
+        assertTrue(content, content.contains("KRAFT") && content.contains("RULED") && content.contains("\"margin\":true"))
+        rule.onNodeWithTag(TAG_TITLE).assertIsDisplayed()
+    }
+
+    @Test
+    fun columnsTakeAFill() {
+        val vm = NotesViewModel(FakeNoteRepository(listOf(Note(id = 1, title = "Plan", body = "x"))), SavedStateHandle())
+        vm.open(1)
+        rule.setContent { NotesScreen(vm) }
+        rule.waitForIdle()
+
+        rule.onNodeWithTag("insert-columns").performScrollTo().performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag("format-fill").performScrollTo().performClick()
+        rule.onNodeWithTag("fill-sage").performScrollTo().performClick()
+        rule.waitForIdle()
+        rule.mainClock.advanceTimeBy(1_000)
+        rule.waitForIdle()
+
+        val content = vm.editor.value!!.content.orEmpty()
+        assertTrue(content, content.contains("\"fill\":\"SAGE\""))
+    }
+}
+
+/** Cover screen: columns stay side by side, and inserting doesn't open the keyboard. */
+@RunWith(AndroidJUnit4::class)
+@Config(sdk = [34], qualifiers = "w360dp-h780dp")
+class CoverRichNoteLayoutTest {
+    @get:Rule val rule = createComposeRule()
+
+    @Test
+    fun columnsStaySideBySide() {
+        val vm = NotesViewModel(FakeNoteRepository(listOf(Note(id = 1, title = "Pockets"))), SavedStateHandle())
+        vm.open(1)
+        rule.setContent { NotesScreen(vm) }
+        rule.waitForIdle()
+
+        rule.onNodeWithTag("insert-columns").performScrollTo().performClick()
+        rule.waitForIdle()
+
+        val first = rule.onNodeWithText("Column 1", useUnmergedTree = true).getUnclippedBoundsInRoot()
+        val second = rule.onNodeWithText("Column 2", useUnmergedTree = true).getUnclippedBoundsInRoot()
+        assertEquals(first.top, second.top)
+        assertTrue(second.left > first.left)
+        rule.onNode(isFocused()).assertDoesNotExist()
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun backspaceClearsEmptyChecklistItemAndBlankSpaceFocusesNote() {
+        val vm = NotesViewModel(FakeNoteRepository(listOf(Note(id = 1, title = "Pockets", body = "scoop"))), SavedStateHandle())
+        vm.open(1)
+        rule.setContent { NotesScreen(vm) }
+        rule.waitForIdle()
+
+        rule.onNodeWithTag("insert-check").performScrollTo().performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag(TAG_NOTE_CHECK).assertExists()
+
+        val checkField = rule.onNode(hasSetTextAction() and hasAnyAncestor(hasTestTag(TAG_NOTE_CHECK)))
+        checkField.performClick()
+        rule.waitForIdle()
+        checkField.performKeyInput { pressKey(Key.Backspace) }
+        rule.waitForIdle()
+        rule.onNodeWithTag(TAG_NOTE_CHECK).assertDoesNotExist()
+
+        rule.onNodeWithTag(TAG_NOTE_BLANK).performClick()
+        rule.waitForIdle()
+        rule.onNode(isFocused()).assertExists()
     }
 }
 

@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -174,55 +175,63 @@ internal fun EditorPane(
     /** Extra buttons at the start of the top bar's actions. */
     extraActions: @Composable () -> Unit = {},
 ) {
-    val plain = TextFieldDefaults.colors(
-        focusedContainerColor = Color.Transparent,
-        unfocusedContainerColor = Color.Transparent,
-        focusedIndicatorColor = Color.Transparent,
-        unfocusedIndicatorColor = Color.Transparent,
-    )
-    Scaffold(
-        modifier = modifier.testTag(TAG_EDITOR_PANE),
-        topBar = {
-            TopAppBar(
-                title = {},
-                navigationIcon = {
-                    if (onBack != null) {
-                        IconButton(onClick = onBack, modifier = Modifier.testTag(TAG_BACK)) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                        }
-                    }
-                },
-                actions = {
-                    extraActions()
-                    if (onExpand != null) {
-                        TextButton(onClick = onExpand, modifier = Modifier.testTag(TAG_EXPAND)) { Text("Full screen") }
-                    }
-                    if (showDelete) {
-                        IconButton(onClick = vm::deleteOpenNote, modifier = Modifier.testTag(TAG_DELETE)) {
-                            Icon(Icons.Filled.Delete, contentDescription = "Delete note")
-                        }
-                    }
-                },
-            )
-        },
-    ) { padding ->
-        Column(Modifier.padding(padding).fillMaxSize()) {
-            TextField(
-                value = state.title,
-                onValueChange = vm::onTitleChange,
-                placeholder = { Text("Title") },
-                textStyle = MaterialTheme.typography.headlineSmall,
-                singleLine = true,
-                colors = plain,
-                modifier = Modifier.fillMaxWidth().testTag(TAG_TITLE),
-            )
-            TextField(
-                value = state.body,
-                onValueChange = vm::onBodyChange,
-                placeholder = { Text("Start writing") },
-                colors = plain,
-                modifier = Modifier.fillMaxWidth().weight(1f).testTag(TAG_BODY),
-            )
+    val nav: @Composable () -> Unit = {
+        if (onBack != null) {
+            IconButton(onClick = onBack, modifier = Modifier.testTag(TAG_BACK)) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+            }
+        }
+    }
+    val actions: @Composable () -> Unit = {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            extraActions()
+            if (onExpand != null) {
+                TextButton(onClick = onExpand, modifier = Modifier.testTag(TAG_EXPAND)) { Text("Full screen") }
+            }
+            if (showDelete) {
+                IconButton(onClick = vm::deleteOpenNote, modifier = Modifier.testTag(TAG_DELETE)) {
+                    Icon(Icons.Filled.Delete, contentDescription = "Delete note")
+                }
+            }
+        }
+    }
+    BoxWithConstraints(modifier.fillMaxSize()) {
+        // Roomy (inner screen, full width): the formatting bar is the app bar, so the page gets the height.
+        val roomy = maxWidth >= TWO_PANE_MIN_WIDTH
+        Scaffold(
+            modifier = Modifier.testTag(TAG_EDITOR_PANE),
+            topBar = {
+                if (!roomy) TopAppBar(title = {}, navigationIcon = nav, actions = { actions() })
+            },
+        ) { padding ->
+            Box(Modifier.padding(padding).fillMaxSize().imePadding()) {
+                NoteEditor(
+                    note = state,
+                    onChange = vm::onDocChange,
+                    wide = roomy,
+                    modifier = Modifier.fillMaxSize().testTag(TAG_BODY),
+                    toolbarAtTop = roomy,
+                    barStart = nav,
+                    barEnd = actions,
+                    // The title sits on the note's paper, so it's coloured inside the paper theme.
+                    header = {
+                        TextField(
+                            value = state.title,
+                            onValueChange = vm::onTitleChange,
+                            placeholder = { Text("Title") },
+                            textStyle = MaterialTheme.typography.headlineSmall,
+                            singleLine = true,
+                            colors = TextFieldDefaults.colors(
+                                focusedContainerColor = Color.Transparent,
+                                unfocusedContainerColor = Color.Transparent,
+                                focusedIndicatorColor = Color.Transparent,
+                                unfocusedIndicatorColor = Color.Transparent,
+                            ),
+                            modifier = Modifier.fillMaxWidth().testTag(TAG_TITLE),
+                        )
+                    },
+                )
+            }
         }
     }
 }
