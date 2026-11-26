@@ -51,6 +51,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
@@ -164,9 +165,14 @@ private class DocEditor(initial: NoteDoc) {
         }
     }.trim()
 
-    fun insert(block: Block, focusKey: String = block.id) {
+    /**
+     * Adds a block after the focused one. From the formatting bar the new block is only selected
+     * (so its menus show) and the keyboard stays shut; typing into it is one tap away.
+     * [keyboard] moves real focus there, for flows that are already typing (checklist Enter).
+     */
+    fun insert(block: Block, focusKey: String = block.id, keyboard: Boolean = false) {
         update(doc.insertAfter(focusedBlockId, block))
-        pendingFocus = focusKey
+        if (keyboard) pendingFocus = focusKey else focused = focusKey
     }
 }
 
@@ -299,7 +305,7 @@ private fun CheckBlockView(editor: DocEditor, block: CheckBlock) {
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
             keyboardActions = KeyboardActions(onNext = {
                 // Enter adds the next checklist item.
-                editor.insert(CheckBlock(NoteDoc.newId()))
+                editor.insert(CheckBlock(NoteDoc.newId()), keyboard = true)
             }),
             modifier = Modifier.weight(1f).trackFocus(editor, block.id),
         )
@@ -346,27 +352,18 @@ private fun TableBlockView(editor: DocEditor, block: TableBlock, wide: Boolean) 
 @Composable
 private fun ColumnsBlockView(editor: DocEditor, block: ColumnsBlock, wide: Boolean) {
     val style = richTextStyle(TextKind.BODY)
+    // Columns stay side by side on both screens; the cover screen just uses tighter gaps.
+    val gap = if (wide) 10.dp else 6.dp
     val frame = Modifier
         .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp))
-        .padding(10.dp)
-    if (wide) {
-        Row(
-            Modifier.fillMaxWidth().height(IntrinsicSize.Min).testTag(TAG_NOTE_COLUMNS),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            block.columns.indices.forEach { i ->
-                Box(Modifier.weight(1f).fillMaxHeight().then(frame)) {
-                    RichArea(editor, "${block.id}#$i", style, "Column ${i + 1}")
-                }
-            }
-        }
-    } else {
-        // Cover screen: columns stack.
-        Column(Modifier.fillMaxWidth().testTag(TAG_NOTE_COLUMNS), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            block.columns.indices.forEach { i ->
-                Box(Modifier.fillMaxWidth().then(frame)) {
-                    RichArea(editor, "${block.id}#$i", style, "Column ${i + 1}")
-                }
+        .padding(if (wide) 10.dp else 6.dp)
+    Row(
+        Modifier.fillMaxWidth().height(IntrinsicSize.Min).testTag(TAG_NOTE_COLUMNS),
+        horizontalArrangement = Arrangement.spacedBy(gap),
+    ) {
+        block.columns.indices.forEach { i ->
+            Box(Modifier.weight(1f).fillMaxHeight().then(frame)) {
+                RichArea(editor, "${block.id}#$i", style, "Column ${i + 1}")
             }
         }
     }
@@ -415,6 +412,7 @@ const val TAG_FORMAT_INSERT = "format-insert"
 
 @Composable
 private fun FormattingBar(editor: DocEditor) {
+    val focusManager = LocalFocusManager.current
     var open by rememberSaveable { mutableStateOf(true) }
     val rich = editor.activeRich
     val span = rich?.currentSpanStyle
@@ -489,7 +487,7 @@ private fun FormattingBar(editor: DocEditor) {
                 DropdownMenuItem(text = { Text("1. Numbers") }, enabled = rich != null, onClick = { rich?.toggleOrderedList(); close() })
                 DropdownMenuItem(
                     text = { Text("☐ Checklist") },
-                    onClick = { editor.insert(CheckBlock(NoteDoc.newId())); close() },
+                    onClick = { focusManager.clearFocus(); editor.insert(CheckBlock(NoteDoc.newId())); close() },
                     modifier = Modifier.testTag("insert-check"),
                 )
                 HorizontalDivider()
@@ -499,20 +497,20 @@ private fun FormattingBar(editor: DocEditor) {
             FormatMenu("Insert", TAG_FORMAT_INSERT) { close ->
                 DropdownMenuItem(
                     text = { Text("Table") },
-                    onClick = { val t = TableBlock.blank(); editor.insert(t, "${t.id}@0,0"); close() },
+                    onClick = { val t = TableBlock.blank(); focusManager.clearFocus(); editor.insert(t, "${t.id}@0,0"); close() },
                     modifier = Modifier.testTag("insert-table"),
                 )
                 DropdownMenuItem(
                     text = { Text("2 columns") },
-                    onClick = { val c = ColumnsBlock(NoteDoc.newId(), listOf("", "")); editor.insert(c, "${c.id}#0"); close() },
+                    onClick = { val c = ColumnsBlock(NoteDoc.newId(), listOf("", "")); focusManager.clearFocus(); editor.insert(c, "${c.id}#0"); close() },
                     modifier = Modifier.testTag("insert-columns"),
                 )
                 DropdownMenuItem(
                     text = { Text("3 columns") },
-                    onClick = { val c = ColumnsBlock(NoteDoc.newId(), listOf("", "", "")); editor.insert(c, "${c.id}#0"); close() },
+                    onClick = { val c = ColumnsBlock(NoteDoc.newId(), listOf("", "", "")); focusManager.clearFocus(); editor.insert(c, "${c.id}#0"); close() },
                 )
-                DropdownMenuItem(text = { Text("Divider") }, onClick = { editor.insert(DividerBlock(NoteDoc.newId())); close() })
-                DropdownMenuItem(text = { Text("Text block") }, onClick = { editor.insert(TextBlock(NoteDoc.newId())); close() })
+                DropdownMenuItem(text = { Text("Divider") }, onClick = { focusManager.clearFocus(); editor.insert(DividerBlock(NoteDoc.newId())); close() })
+                DropdownMenuItem(text = { Text("Text block") }, onClick = { focusManager.clearFocus(); editor.insert(TextBlock(NoteDoc.newId())); close() })
             }
             if (focusedBlock is TableBlock) {
                 val (r, c) = editor.focused!!.substringAfter('@').split(',').map { it.toIntOrNull() ?: 0 }.let { it[0] to it.getOrElse(1) { 0 } }

@@ -1,6 +1,9 @@
 package com.boro.notes
 
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
+import androidx.compose.ui.test.isFocused
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
@@ -110,6 +113,31 @@ class RichNoteLayoutTest {
         val content = vm.editor.value!!.content
         assertTrue("content was $content", content != null && content.contains("\"table\"") && content.contains("\"columns\""))
         assertEquals("scoop", vm.editor.value!!.body.lineSequence().first())
+    }
+}
+
+/** Cover screen: columns stay side by side, and inserting doesn't open the keyboard. */
+@RunWith(AndroidJUnit4::class)
+@Config(sdk = [34], qualifiers = "w360dp-h780dp")
+class CoverRichNoteLayoutTest {
+    @get:Rule val rule = createComposeRule()
+
+    @Test
+    fun columnsStaySideBySide() {
+        val vm = NotesViewModel(FakeNoteRepository(listOf(Note(id = 1, title = "Pockets"))), SavedStateHandle())
+        vm.open(1)
+        rule.setContent { NotesScreen(vm) }
+        rule.waitForIdle()
+
+        rule.onNodeWithTag(TAG_FORMAT_INSERT).performClick()
+        rule.onNodeWithTag("insert-columns").performClick()
+        rule.waitForIdle()
+
+        val first = rule.onNodeWithText("Column 1", useUnmergedTree = true).getUnclippedBoundsInRoot()
+        val second = rule.onNodeWithText("Column 2", useUnmergedTree = true).getUnclippedBoundsInRoot()
+        assertEquals(first.top, second.top)
+        assertTrue(second.left > first.left)
+        rule.onNode(isFocused()).assertDoesNotExist()
     }
 }
 
