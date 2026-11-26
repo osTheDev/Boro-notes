@@ -52,6 +52,12 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.foundation.relocation.bringIntoViewRequester
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.ExperimentalFoundationApi
 import com.boro.notes.notes.PaperPattern
 import com.boro.notes.notes.PaperColor
 import com.boro.notes.notes.Paper
@@ -276,10 +282,12 @@ private fun NoteEditorContent(
     val lined = paper.pattern != PaperPattern.PLAIN
     Column(modifier) {
         PaperTheme(paper) {
+          // The page is at least as tall as the screen, so paper and lines always reach the bottom.
+          BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
+            val pageHeight = maxHeight
             Column(
                 Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
+                    .fillMaxSize()
                     .background(paper.color.argb?.let { Color(it) } ?: Color.Transparent)
                     .verticalScroll(rememberScrollState())
                     .testTag(TAG_NOTE_PAPER),
@@ -290,6 +298,7 @@ private fun NoteEditorContent(
                 Column(
                     Modifier
                         .fillMaxWidth()
+                        .heightIn(min = pageHeight)
                         .paperLines(paper, lineHeight, top = 8.dp, marginX = if (paper.margin) 30.dp else null)
                         .padding(start = start, end = 16.dp, top = 8.dp, bottom = 8.dp)
                         .testTag(TAG_NOTE_EDITOR),
@@ -307,16 +316,17 @@ private fun NoteEditorContent(
                             }
                         }
                     }
-                    // Blank space under the note: tap it to keep typing on the last line.
-                    Box(
-                        Modifier
-                            .fillMaxWidth()
-                            .height(lineHeight * 12)
-                            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { editor.focusLast() }
-                            .testTag(TAG_NOTE_BLANK)
-                    )
+                    // Blank space under the note, down to the bottom of the page and a little past it
+                    // (so the last line can scroll up from behind the keyboard). Tap it to keep typing.
+                    val tapToType = Modifier.clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                    ) { editor.focusLast() }
+                    Box(Modifier.fillMaxWidth().weight(1f).then(tapToType).testTag(TAG_NOTE_BLANK))
+                    Box(Modifier.fillMaxWidth().height(lineHeight * 6).then(tapToType))
                 }
             }
+          }
         }
         FormattingBar(editor)
     }
@@ -416,6 +426,7 @@ private fun richTextStyle(kind: TextKind): TextStyle {
     return base.copy(color = MaterialTheme.colorScheme.onSurface)
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun RichArea(
     editor: DocEditor,
@@ -427,12 +438,28 @@ private fun RichArea(
     onEmptyBackspace: (() -> Boolean)? = null,
 ) {
     val state = editor.rich[key] ?: return
+    // Keep the cursor on screen while typing: the page scrolls as text grows past the bottom.
+    val bringIntoView = remember { BringIntoViewRequester() }
+    var layout by remember { mutableStateOf<TextLayoutResult?>(null) }
+    val lineGap = with(LocalDensity.current) { 32.dp.toPx() }
+    LaunchedEffect(state, editor.focused == key) {
+        if (editor.focused != key) return@LaunchedEffect
+        snapshotFlow { Triple(state.selection, state.annotatedString.text.length, layout) }
+            .collect { (sel, _, l) ->
+                if (l == null) return@collect
+                val offset = sel.end.coerceIn(0, l.layoutInput.text.length)
+                val r = runCatching { l.getCursorRect(offset) }.getOrNull() ?: return@collect
+                bringIntoView.bringIntoView(Rect(r.left, r.top, r.right + 1f, r.bottom + lineGap))
+            }
+    }
     BasicRichTextEditor(
         state = state,
         textStyle = style,
         cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+        onTextLayout = { layout = it },
         modifier = modifier
             .fillMaxWidth()
+            .bringIntoViewRequester(bringIntoView)
             .onEmptyBackspace({ state.annotatedString.text.isEmpty() }, onEmptyBackspace)
             .trackFocus(editor, key),
         decorationBox = { inner ->
