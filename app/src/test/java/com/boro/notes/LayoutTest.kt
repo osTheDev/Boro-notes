@@ -162,7 +162,7 @@ class NotePaperLayoutTest {
         rule.onNodeWithTag(TAG_FORMAT_INSERT).performClick()
         rule.onNodeWithTag("insert-columns").performClick()
         rule.waitForIdle()
-        rule.onNodeWithTag("format-fill").performClick()
+        rule.onNodeWithTag("format-fill").performScrollTo().performClick()
         rule.onNodeWithTag("fill-sage").performScrollTo().performClick()
         rule.waitForIdle()
         rule.mainClock.advanceTimeBy(1_000)
