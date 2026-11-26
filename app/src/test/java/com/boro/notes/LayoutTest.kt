@@ -7,6 +7,7 @@ import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.performKeyInput
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.pressKey
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.isFocused
@@ -140,7 +141,7 @@ class NotePaperLayoutTest {
 
         for (item in listOf("paper-kraft", "pattern-ruled", "paper-margin")) {
             rule.onNodeWithTag("format-page").performClick()
-            rule.onNodeWithTag(item).performClick()
+            rule.onNodeWithTag(item).performScrollTo().performClick()
             rule.waitForIdle()
         }
         rule.mainClock.advanceTimeBy(1_000)
