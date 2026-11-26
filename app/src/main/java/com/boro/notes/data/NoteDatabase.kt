@@ -4,13 +4,34 @@ import android.content.Context
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [Note::class], version = 1, exportSchema = true)
+@Database(entities = [Note::class, Design::class], version = 2, exportSchema = true)
 abstract class NoteDatabase : RoomDatabase() {
     abstract fun noteDao(): NoteDao
+    abstract fun designDao(): DesignDao
 
     companion object {
-        fun create(context: Context): NoteDatabase =
-            Room.databaseBuilder(context, NoteDatabase::class.java, "boro-notes.db").build()
+        /** Checkpoint 2 added designs (garment sketches). */
+        val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `designs` (" +
+                        "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`name` TEXT NOT NULL, " +
+                        "`stage` TEXT NOT NULL, " +
+                        "`noteId` INTEGER, " +
+                        "`shapes` TEXT NOT NULL, " +
+                        "`createdAt` INTEGER NOT NULL, " +
+                        "`updatedAt` INTEGER NOT NULL)"
+                )
+            }
+        }
+
+        fun create(context: Context, name: String = "boro-notes.db"): NoteDatabase =
+            Room.databaseBuilder(context, NoteDatabase::class.java, name)
+                .addMigrations(MIGRATION_1_2)
+                .build()
     }
 }

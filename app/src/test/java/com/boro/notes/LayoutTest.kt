@@ -73,3 +73,61 @@ class InnerScreenLayoutTest {
         assertEquals("Tee shirt", vm.editor.value!!.title)
     }
 }
+
+/** Designs on the cover screen: list, then a full-screen canvas. */
+@RunWith(AndroidJUnit4::class)
+@Config(sdk = [34], qualifiers = "w360dp-h780dp")
+class CoverDesignsLayoutTest {
+    @get:Rule val rule = createComposeRule()
+
+    @Test
+    fun newDesignOpensCanvasWithoutBottomBar() {
+        val notes = FakeNoteRepository()
+        val notesVm = NotesViewModel(notes, SavedStateHandle())
+        val designsVm = com.boro.notes.ui.DesignsViewModel(FakeDesignRepository(), notes, SavedStateHandle())
+        rule.setContent { com.boro.notes.ui.BoroRoot(notesVm, designsVm) }
+
+        rule.onNodeWithTag("navDesigns").performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_DESIGN_LIST).assertIsDisplayed()
+
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_NEW_DESIGN).performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_SKETCH_EDITOR).assertIsDisplayed()
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_CANVAS).assertIsDisplayed()
+        rule.onNodeWithTag("navDesigns").assertDoesNotExist()
+    }
+}
+
+/** Designs on the inner screen: tracker board, then canvas with the linked note beside it. */
+@RunWith(AndroidJUnit4::class)
+@Config(sdk = [34], qualifiers = "w840dp-h780dp")
+class InnerDesignsLayoutTest {
+    @get:Rule val rule = createComposeRule()
+
+    @Test
+    fun boardThenCanvasBesideNote() {
+        val notes = FakeNoteRepository()
+        val notesVm = NotesViewModel(notes, SavedStateHandle())
+        val designsVm = com.boro.notes.ui.DesignsViewModel(
+            FakeDesignRepository(listOf(com.boro.notes.data.Design(id = 1, name = "Smock"))),
+            notes,
+            SavedStateHandle(),
+        )
+        rule.setContent { com.boro.notes.ui.BoroRoot(notesVm, designsVm) }
+
+        rule.onNodeWithTag("navDesigns").performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_DESIGN_BOARD).assertIsDisplayed()
+
+        rule.onNodeWithTag("${com.boro.notes.ui.TAG_DESIGN_PREFIX}1").performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_CANVAS).assertIsDisplayed()
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_LINKED_NOTE).assertIsDisplayed()
+
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_LINK_NOTE_BUTTON).performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag(TAG_EDITOR_PANE).assertIsDisplayed()
+        assertEquals("Smock", notesVm.editor.value!!.title)
+    }
+}

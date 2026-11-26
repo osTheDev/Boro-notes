@@ -28,6 +28,15 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
+      # Robolectric downloads Android runtime jars from Maven at test time; keep them between
+      # runs so a flaky download can't fail the tests.
+      - name: Cache Robolectric runtime jars
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository/org/robolectric
+          key: robolectric-${{ hashFiles('gradle/libs.versions.toml') }}
+          restore-keys: robolectric-
+
       - name: Unit and layout tests
         run: ./gradlew testDebugUnitTest --stacktrace
 
