@@ -133,6 +133,15 @@ class InnerDesignsLayoutTest {
         rule.onNodeWithTag(TAG_EDITOR_PANE).assertIsDisplayed()
         assertEquals("Smock", notesVm.editor.value!!.title)
 
+        // Full screen note covers the side menu and canvas; back returns.
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_EXPAND).performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag("navDesigns").assertDoesNotExist()
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_CANVAS).assertDoesNotExist()
+        rule.onNodeWithTag(TAG_BACK).performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_CANVAS).assertIsDisplayed()
+
         // Hiding the notes panel gives the canvas the full width.
         rule.onNodeWithTag(com.boro.notes.ui.TAG_NOTES_TOGGLE).performClick()
         rule.waitForIdle()

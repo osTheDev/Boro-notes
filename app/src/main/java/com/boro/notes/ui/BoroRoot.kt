@@ -1,5 +1,6 @@
 package com.boro.notes.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -38,6 +39,21 @@ fun BoroRoot(notesVm: NotesViewModel, designsVm: DesignsViewModel) {
     var section by rememberSaveable { mutableStateOf(Section.NOTES) }
     val noteOpen = notesVm.editor.collectAsStateWithLifecycle().value != null
     val sketchOpen = designsVm.sketch.collectAsStateWithLifecycle().value != null
+    val fullScreen by notesVm.fullScreen.collectAsStateWithLifecycle()
+    val openNote = notesVm.editor.collectAsStateWithLifecycle().value
+
+    // A note in full screen covers everything, side menu included.
+    if (fullScreen && openNote != null) {
+        BackHandler { notesVm.setFullScreen(false) }
+        EditorPane(
+            openNote,
+            notesVm,
+            onBack = { notesVm.setFullScreen(false) },
+            showDelete = false,
+            modifier = Modifier.fillMaxSize(),
+        )
+        return
+    }
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val wide = maxWidth >= TWO_PANE_MIN_WIDTH

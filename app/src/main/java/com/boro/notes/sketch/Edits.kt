@@ -95,8 +95,11 @@ object Edits {
 
     enum class CornerStyle { CLIPPED, ROUNDED }
 
-    /** Clips or rounds every corner of the shape (not the ends of an open line). */
-    fun corners(shape: Shape, style: CornerStyle, size: Float = 0.75f): Shape {
+    /**
+     * Clips or rounds corners of the shape (never the ends of an open line): all of them, or only
+     * the point indices in [only].
+     */
+    fun corners(shape: Shape, style: CornerStyle, size: Float = 0.75f, only: Set<Int>? = null): Shape {
         if (shape.stamp != null || shape.points.size < 3) return shape
         val p = shape.points
         val n = p.size
@@ -104,7 +107,7 @@ object Edits {
         val outCorners = mutableListOf<Boolean>()
         for (i in 0 until n) {
             val isEnd = !shape.closed && (i == 0 || i == n - 1)
-            if (isEnd || !shape.corners.getOrElse(i) { true }) {
+            if (isEnd || !shape.corners.getOrElse(i) { true } || (only != null && i !in only)) {
                 outPts += p[i]
                 outCorners += shape.corners.getOrElse(i) { true }
                 continue
@@ -177,6 +180,51 @@ object Edits {
             style = LineStyle.STITCH,
             group = shape.group,
         )
+    }
+
+    /** Index of the topstitching that belongs to shape [index] (same group, closed stitch line inside it). */
+    fun topstitchOf(shapes: List<Shape>, index: Int): Int? {
+        val shape = shapes.getOrNull(index) ?: return null
+        val group = shape.group ?: return null
+        val outer = bounds(listOf(shape)) ?: return null
+        return shapes.indices.firstOrNull { j ->
+            val s = shapes[j]
+            j != index && s.group == group && s.closed && s.style == LineStyle.STITCH && s.stamp == null &&
+                bounds(listOf(s))?.let { b ->
+                    b.minX > outer.minX && b.maxX < outer.maxX && b.minY > outer.minY && b.maxY < outer.maxY
+                } == true
+        }
+    }
+
+    /** Whether Topstitch applies to this shape: a closed, solid, drawn outline. */
+    fun canTopstitch(shape: Shape) = shape.closed && shape.stamp == null && shape.stroke && shape.style == LineStyle.SOLID
+
+    /**
+     * Topstitch on/off for the selection: adds stitching inside each selected outline that has
+     * none, or, if all of them already have it, removes it. Never stitches a stitch line, so
+     * repeated taps can't pile up shapes.
+     */
+    fun toggleTopstitch(shapes: List<Shape>, selection: Set<Int>): Pair<List<Shape>, Set<Int>> {
+        val targets = selection.filter { shapes.getOrNull(it)?.let(::canTopstitch) == true }
+        if (targets.isEmpty()) return shapes to selection
+        val existing = targets.mapNotNull { topstitchOf(shapes, it) }.toSet()
+        if (existing.size == targets.size) {
+            // All stitched already: take the stitching off.
+            val kept = shapes.filterIndexed { i, _ -> i !in existing }
+            val remap = shapes.indices.filter { it !in existing }.withIndex().associate { (newI, oldI) -> oldI to newI }
+            return kept to selection.mapNotNull { remap[it] }.toSet()
+        }
+        var result = shapes
+        val added = mutableListOf<Shape>()
+        for (i in targets) {
+            if (topstitchOf(result, i) != null) continue
+            val group = result[i].group ?: newGroupId(result).also { g ->
+                result = result.toMutableList().also { it[i] = it[i].copy(group = g) }
+            }
+            topstitch(result[i])?.let { added += it.copy(group = group) }
+        }
+        val start = result.size
+        return (result + added) to (selection + (start until start + added.size))
     }
 
     private fun normal(a: Pt, b: Pt): Pt {

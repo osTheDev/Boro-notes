@@ -26,6 +26,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TopAppBar
@@ -74,7 +75,7 @@ fun NotesScreen(vm: NotesViewModel) {
                 VerticalDivider()
                 Box(Modifier.weight(0.6f).fillMaxSize()) {
                     if (current != null) {
-                        EditorPane(current, vm, onBack = null)
+                        EditorPane(current, vm, onBack = null, onExpand = { vm.setFullScreen(true) })
                     } else {
                         EmptyDetail()
                     }
@@ -166,6 +167,8 @@ internal fun EditorPane(
     onBack: (() -> Unit)?,
     showDelete: Boolean = true,
     modifier: Modifier = Modifier,
+    /** When set, shows a Full screen button. */
+    onExpand: (() -> Unit)? = null,
 ) {
     val plain = TextFieldDefaults.colors(
         focusedContainerColor = Color.Transparent,
@@ -186,6 +189,9 @@ internal fun EditorPane(
                     }
                 },
                 actions = {
+                    if (onExpand != null) {
+                        TextButton(onClick = onExpand, modifier = Modifier.testTag(TAG_EXPAND)) { Text("Full screen") }
+                    }
                     if (showDelete) {
                         IconButton(onClick = vm::deleteOpenNote, modifier = Modifier.testTag(TAG_DELETE)) {
                             Icon(Icons.Filled.Delete, contentDescription = "Delete note")
@@ -232,4 +238,5 @@ const val TAG_TITLE = "titleField"
 const val TAG_BODY = "bodyField"
 const val TAG_BACK = "back"
 const val TAG_DELETE = "delete"
+const val TAG_EXPAND = "expandNote"
 const val TAG_NOTE_PREFIX = "note-"

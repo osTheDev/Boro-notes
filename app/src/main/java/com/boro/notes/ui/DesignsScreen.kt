@@ -73,6 +73,7 @@ import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.boro.notes.data.Design
 import com.boro.notes.data.Stage
+import com.boro.notes.sketch.Edits
 import com.boro.notes.sketch.FillPattern
 import com.boro.notes.sketch.Preset
 import com.boro.notes.sketch.SketchCodec
@@ -357,7 +358,14 @@ private fun LinkedNotePane(
     val note = noteEditor?.takeIf { it.id == state.noteId }
     Box(modifier.testTag(TAG_LINKED_NOTE)) {
         if (note != null) {
-            EditorPane(note, notesVm, onBack = onBack, showDelete = false)
+            EditorPane(
+                note,
+                notesVm,
+                onBack = onBack,
+                showDelete = false,
+                // Inner screen: blow the note up to the whole screen.
+                onExpand = if (onBack == null) ({ notesVm.setFullScreen(true) }) else null,
+            )
         } else {
             Column(
                 Modifier.fillMaxSize().padding(24.dp),
@@ -379,20 +387,6 @@ private fun LinkedNotePane(
                     TextButton(onClick = onBack) { Text("Back to sketch") }
                 }
             }
-        }
-    }
-}
-
-@Composable
-private fun PatternPicker(vm: DesignsViewModel) {
-    var open by remember { mutableStateOf(false) }
-    Box {
-        TextButton(onClick = { open = true }) { Text("Quilting") }
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            FillPattern.entries.forEach {
-                DropdownMenuItem(text = { Text(it.label) }, onClick = { vm.setPattern(it); open = false })
-            }
-            DropdownMenuItem(text = { Text("None") }, onClick = { vm.setPattern(null); open = false })
         }
     }
 }
@@ -427,108 +421,205 @@ private fun EditorOverflow(vm: DesignsViewModel) {
     }
 }
 
+private data class ToolGroup(val label: String, val tools: List<Tool>)
+
+private val TOOL_GROUPS = listOf(
+    ToolGroup("Draw", listOf(Tool.DRAW, Tool.LINE, Tool.BOX, Tool.OVAL)),
+    ToolGroup("Edit", listOf(Tool.SELECT, Tool.POINTS, Tool.ERASE)),
+    ToolGroup("Add", listOf(Tool.FILL, Tool.HARDWARE)),
+)
+
+private val Tool.hint: String
+    get() = when (this) {
+        Tool.DRAW -> "Freehand, cleaned up"
+        Tool.LINE -> "Drag a straight line"
+        Tool.BOX -> "Drag corner to corner"
+        Tool.OVAL -> "Drag corner to corner"
+        Tool.SELECT -> "Pick, move and change pieces"
+        Tool.POINTS -> "Move, add and shape points"
+        Tool.ERASE -> "Tap a line to remove it"
+        Tool.FILL -> "Tap inside to colour"
+        Tool.HARDWARE -> "Rivets, snaps, buttons"
+    }
+
+/** A chip that opens a menu; shows ▾ so it reads as a menu. */
+@Composable
+private fun MenuChip(
+    label: String,
+    selected: Boolean = false,
+    modifier: Modifier = Modifier,
+    content: @Composable (close: () -> Unit) -> Unit,
+) {
+    var open by remember { mutableStateOf(false) }
+    Box(modifier) {
+        FilterChip(
+            selected = selected,
+            onClick = { open = true },
+            label = { Text("$label ▾") },
+        )
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            content { open = false }
+        }
+    }
+}
+
 @Composable
 private fun ToolBar(state: SketchState, vm: DesignsViewModel) {
     Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(vertical = 4.dp)) {
+        // Main row: tool groups, grid settings, undo/redo.
         Row(
             Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Tool.entries.forEach { tool ->
-                FilterChip(
-                    selected = state.tool == tool,
-                    onClick = { vm.setTool(tool) },
-                    label = { Text(tool.label) },
-                    modifier = Modifier.testTag("tool-${tool.name}"),
+            TOOL_GROUPS.forEach { group ->
+                val active = state.tool in group.tools
+                MenuChip(
+                    label = if (active) state.tool.label else group.label,
+                    selected = active,
+                    modifier = Modifier.testTag("group-${group.label}"),
+                ) { close ->
+                    group.tools.forEach { tool ->
+                        DropdownMenuItem(
+                            text = {
+                                Column {
+                                    Text(tool.label)
+                                    Text(tool.hint, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            },
+                            trailingIcon = { if (state.tool == tool) Text("✓") },
+                            onClick = { vm.setTool(tool); close() },
+                            modifier = Modifier.testTag("tool-${tool.name}"),
+                        )
+                    }
+                }
+            }
+            MenuChip("Grid") { close ->
+                DropdownMenuItem(
+                    text = { Text("Snap to grid") },
+                    trailingIcon = { if (state.options.snapToGrid) Text("✓") },
+                    onClick = { vm.toggleSnap(); close() },
+                )
+                DropdownMenuItem(
+                    text = { Text("Auto-straighten") },
+                    trailingIcon = { if (state.options.straighten) Text("✓") },
+                    onClick = { vm.toggleStraighten(); close() },
                 )
             }
-            VerticalDivider(Modifier.height(24.dp))
-            FilterChip(selected = state.options.snapToGrid, onClick = vm::toggleSnap, label = { Text("Snap") })
-            FilterChip(selected = state.options.straighten, onClick = vm::toggleStraighten, label = { Text("Straighten") })
             VerticalDivider(Modifier.height(24.dp))
             IconButton(onClick = vm::undo, enabled = state.canUndo) { Text("↶", fontSize = 22.sp) }
             IconButton(onClick = vm::redo, enabled = state.canRedo) { Text("↷", fontSize = 22.sp) }
         }
-        if (state.tool == Tool.SELECT) {
-            Row(
-                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                if (state.selection.isEmpty()) {
-                    Text("Tap shapes to select them, then drag to move", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                } else {
-                    val grouped = state.selection.any { state.shapes.getOrNull(it)?.group != null }
-                    TextButton(onClick = if (grouped) vm::ungroupSelection else vm::groupSelection) { Text(if (grouped) "Ungroup" else "Group") }
-                    TextButton(onClick = { vm.duplicateSelection(mirror = false) }) { Text("Duplicate") }
-                    TextButton(onClick = { vm.duplicateSelection(mirror = true) }) { Text("Mirror copy") }
-                    TextButton(onClick = vm::flipSelection) { Text("Flip") }
-                    TextButton(onClick = vm::topstitchSelection) { Text("Topstitch") }
-                    TextButton(onClick = vm::toggleStitchStyle) { Text("Stitch line") }
-                    TextButton(onClick = vm::clipCorners) { Text("Clip corners") }
-                    TextButton(onClick = vm::roundCorners) { Text("Round corners") }
-                    PatternPicker(vm)
-                    TextButton(onClick = vm::deleteSelection) { Text("Delete") }
-                    TextButton(onClick = vm::clearSelection) { Text("Done") }
-                }
-            }
-        }
-        if (state.tool == Tool.HARDWARE) {
-            Row(
-                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Stamp.entries.forEach { stamp ->
-                    FilterChip(selected = state.stamp == stamp, onClick = { vm.setStamp(stamp) }, label = { Text(stamp.label) })
-                }
-                Text("Tap to place", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        }
-        if (state.tool == Tool.POINTS) {
-            Row(
-                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                val point = state.selectedPoint
-                val shape = state.selectedShape?.let { state.shapes.getOrNull(it) }
-                when {
-                    shape == null -> Text("Tap a line to edit its points", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    point == null -> Text("Drag a point to move it. Tap the line to add one.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    else -> {
-                        val isCorner = shape.corners.getOrElse(point) { true }
-                        FilterChip(selected = isCorner, onClick = vm::toggleSelectedCorner, label = { Text("Corner") })
-                        FilterChip(selected = !isCorner, onClick = vm::toggleSelectedCorner, label = { Text("Smooth") })
-                        TextButton(onClick = vm::deleteSelectedPoint) { Text("Delete point") }
+
+        // Second row: what the current tool can do.
+        Row(
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            when (state.tool) {
+                Tool.SELECT -> SelectActions(state, vm)
+                Tool.POINTS -> PointActions(state, vm)
+                Tool.FILL -> FillSwatches(state, vm)
+                Tool.HARDWARE -> {
+                    Stamp.entries.forEach { stamp ->
+                        FilterChip(selected = state.stamp == stamp, onClick = { vm.setStamp(stamp) }, label = { Text(stamp.label) })
                     }
+                    Hint("Tap to place")
                 }
-            }
-        }
-        if (state.tool == Tool.FILL) {
-            Row(
-                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                FILL_COLORS.forEach { color ->
-                    val selected = state.fillColor == color
-                    Box(
-                        Modifier
-                            .size(32.dp)
-                            .background(color?.let { Color(it) } ?: MaterialTheme.colorScheme.surface, CircleShape)
-                            .border(
-                                width = if (selected) 3.dp else 1.dp,
-                                color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
-                                shape = CircleShape,
-                            )
-                            .clickable { vm.setFillColor(color) },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        if (color == null) Text("✕", fontSize = 14.sp)
-                    }
-                }
+                else -> Hint(state.tool.hint)
             }
         }
     }
+}
+
+@Composable
+private fun Hint(text: String) {
+    Text(text, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
+}
+
+@Composable
+private fun SelectActions(state: SketchState, vm: DesignsViewModel) {
+    if (state.selection.isEmpty()) {
+        Hint("Tap pieces to select them, then drag to move")
+        return
+    }
+    Text("${state.selection.size} selected", style = MaterialTheme.typography.labelLarge)
+    val grouped = state.selection.any { state.shapes.getOrNull(it)?.group != null }
+    MenuChip("Arrange", modifier = Modifier.testTag("menu-arrange")) { close ->
+        DropdownMenuItem(text = { Text(if (grouped) "Ungroup" else "Group") }, onClick = {
+            if (grouped) vm.ungroupSelection() else vm.groupSelection(); close()
+        })
+        DropdownMenuItem(text = { Text("Duplicate") }, onClick = { vm.duplicateSelection(mirror = false); close() })
+        DropdownMenuItem(text = { Text("Mirror copy") }, onClick = { vm.duplicateSelection(mirror = true); close() })
+        DropdownMenuItem(text = { Text("Flip") }, onClick = { vm.flipSelection(); close() })
+    }
+    val stitched = state.selection.any { Edits.topstitchOf(state.shapes, it) != null }
+    MenuChip("Stitching", modifier = Modifier.testTag("menu-stitching")) { close ->
+        DropdownMenuItem(
+            text = { Text(if (stitched) "Remove topstitch" else "Topstitch inside") },
+            onClick = { vm.topstitchSelection(); close() },
+            modifier = Modifier.testTag("action-topstitch"),
+        )
+        DropdownMenuItem(text = { Text("Make stitch line / solid line") }, onClick = { vm.toggleStitchStyle(); close() })
+        HorizontalDivider()
+        FillPattern.entries.forEach { pattern ->
+            DropdownMenuItem(text = { Text("Quilting: ${pattern.label}") }, onClick = { vm.setPattern(pattern); close() })
+        }
+        DropdownMenuItem(text = { Text("No quilting") }, onClick = { vm.setPattern(null); close() })
+    }
+    MenuChip("Corners") { close ->
+        DropdownMenuItem(text = { Text("Clip all corners") }, onClick = { vm.clipCorners(); close() })
+        DropdownMenuItem(text = { Text("Round all corners") }, onClick = { vm.roundCorners(); close() })
+        Text(
+            "For one corner, use Edit › Points",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+        )
+    }
+    TextButton(onClick = vm::deleteSelection) { Text("Delete") }
+    TextButton(onClick = vm::clearSelection) { Text("Done") }
+}
+
+@Composable
+private fun PointActions(state: SketchState, vm: DesignsViewModel) {
+    val point = state.selectedPoint
+    val shape = state.selectedShape?.let { state.shapes.getOrNull(it) }
+    when {
+        shape == null -> Hint("Tap a line to edit its points")
+        point == null -> Hint("Drag a point to move it. Tap the line to add one.")
+        else -> {
+            val isCorner = shape.corners.getOrElse(point) { true }
+            FilterChip(selected = isCorner, onClick = { if (!isCorner) vm.toggleSelectedCorner() }, label = { Text("Corner") })
+            FilterChip(selected = !isCorner, onClick = { if (isCorner) vm.toggleSelectedCorner() }, label = { Text("Smooth") })
+            if (isCorner) {
+                TextButton(onClick = { vm.styleSelectedCorner(Edits.CornerStyle.CLIPPED) }) { Text("Clip") }
+                TextButton(onClick = { vm.styleSelectedCorner(Edits.CornerStyle.ROUNDED) }) { Text("Round") }
+            }
+            TextButton(onClick = vm::deleteSelectedPoint) { Text("Delete point") }
+        }
+    }
+}
+
+@Composable
+private fun FillSwatches(state: SketchState, vm: DesignsViewModel) {
+    FILL_COLORS.forEach { color ->
+        val selected = state.fillColor == color
+        Box(
+            Modifier
+                .size(32.dp)
+                .background(color?.let { Color(it) } ?: MaterialTheme.colorScheme.surface, CircleShape)
+                .border(
+                    width = if (selected) 3.dp else 1.dp,
+                    color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
+                    shape = CircleShape,
+                )
+                .clickable { vm.setFillColor(color) },
+            contentAlignment = Alignment.Center,
+        ) {
+            if (color == null) Text("✕", fontSize = 14.sp)
+        }
+    }
+    Hint("Tap inside a shape")
 }

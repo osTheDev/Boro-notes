@@ -79,6 +79,33 @@ class EditsTest {
     }
 
     @Test
+    fun topstitchTogglesAndNeverPilesUp() {
+        var shapes = listOf(box)
+        var selection = setOf(0)
+        repeat(3) {
+            // On, off, on: tapping repeatedly never stitches the stitching.
+            val (s, sel) = Edits.toggleTopstitch(shapes, selection)
+            shapes = s
+            selection = sel
+        }
+        assertEquals(2, shapes.size)
+        assertEquals(LineStyle.STITCH, shapes[1].style)
+        assertEquals(1, Edits.topstitchOf(shapes, 0))
+        // Selecting both the outline and its stitching and toggling removes the stitching.
+        val (off, _) = Edits.toggleTopstitch(shapes, setOf(0, 1))
+        assertEquals(1, off.size)
+    }
+
+    @Test
+    fun clipsJustOneCorner() {
+        val one = Edits.corners(box, Edits.CornerStyle.CLIPPED, 1f, only = setOf(2))
+        assertEquals(5, one.points.size)
+        assertEquals(Pt(0f, 0f), one.points[0])
+        assertEquals(Pt(4f, 5f), one.points[2])
+        assertEquals(Pt(3f, 6f), one.points[3])
+    }
+
+    @Test
     fun patternsCoverTheShape() {
         FillPattern.entries.forEach { assertTrue(Edits.patternLines(box, it).isNotEmpty()) }
         assertEquals(5, Edits.patternLines(box, FillPattern.LINES).size)

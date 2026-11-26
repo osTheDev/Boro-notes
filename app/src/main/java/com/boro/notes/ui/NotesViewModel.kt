@@ -40,6 +40,14 @@ class NotesViewModel(
 
     private var saveJob: Job? = null
 
+    private val _fullScreen = MutableStateFlow(false)
+    /** The open note fills the whole screen (side menu and list hidden). */
+    val fullScreen: StateFlow<Boolean> = _fullScreen.asStateFlow()
+
+    fun setFullScreen(on: Boolean) {
+        _fullScreen.value = on && _editor.value != null
+    }
+
     init {
         // Restore the open note (and any unsaved draft) after process death.
         savedState.get<Long>(KEY_OPEN_ID)?.let { id ->
@@ -77,12 +85,14 @@ class NotesViewModel(
 
     fun close() {
         flush()
+        _fullScreen.value = false
         clearOpen()
     }
 
     fun deleteOpenNote() {
         val current = _editor.value ?: return
         saveJob?.cancel()
+        _fullScreen.value = false
         clearOpen()
         viewModelScope.launch { repository.delete(current.id) }
     }

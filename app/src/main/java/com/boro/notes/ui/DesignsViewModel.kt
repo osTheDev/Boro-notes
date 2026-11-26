@@ -297,24 +297,26 @@ class DesignsViewModel(
         shapes.mapIndexed { i, s -> if (i in sel && s.closed && s.stamp == null) s.copy(pattern = pattern) else s }
     }
 
-    /** Adds topstitching inside each selected closed shape, grouped with it. */
+    /** Topstitch on/off for the selected outlines (see [Edits.toggleTopstitch]). */
     fun topstitchSelection() {
         val current = _sketch.value ?: return
         if (current.selection.isEmpty()) return
-        var shapes = current.shapes
-        val added = mutableListOf<Shape>()
-        for (i in current.selection.sorted()) {
-            val s = shapes[i]
-            if (!s.closed || s.stamp != null || !s.stroke) continue
-            val group = s.group ?: Edits.newGroupId(shapes).also { g ->
-                shapes = shapes.toMutableList().also { it[i] = s.copy(group = g) }
-            }
-            Edits.topstitch(shapes[i])?.let { added += it.copy(group = group) }
-        }
-        if (added.isEmpty()) return
-        val start = shapes.size
-        commitShapes(shapes + added)
-        _sketch.value = _sketch.value?.copy(selection = current.selection + (start until start + added.size))
+        val (shapes, selection) = Edits.toggleTopstitch(current.shapes, current.selection)
+        if (shapes == current.shapes) return
+        commitShapes(shapes)
+        _sketch.value = _sketch.value?.copy(selection = selection)
+    }
+
+    /** Points tool: clips or rounds just the selected corner. */
+    fun styleSelectedCorner(style: Edits.CornerStyle) {
+        val current = _sketch.value ?: return
+        val shapeIndex = current.selectedShape ?: return
+        val index = current.selectedPoint ?: return
+        val shape = current.shapes.getOrNull(shapeIndex) ?: return
+        val updated = Edits.corners(shape, style, only = setOf(index))
+        if (updated == shape) return
+        commitShapes(current.shapes.toMutableList().also { it[shapeIndex] = updated })
+        _sketch.value = _sketch.value?.copy(selectedPoint = null)
     }
 
     fun duplicateSelection(mirror: Boolean) {
