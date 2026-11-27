@@ -40,6 +40,10 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.foundation.layout.height
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -98,11 +102,13 @@ fun TasksScreen(vm: TasksViewModel, wide: Boolean) {
 
     Scaffold(
         modifier = Modifier.testTag(TAG_TASKS),
-        topBar = { TopAppBar(title = { Text("Tasks") }) },
+        // On the cover screen the section headers are enough; the list gets the height.
+        topBar = { if (wide) TopAppBar(title = { Text("Tasks") }) },
     ) { padding ->
         val cards: LazyListScope.() -> Unit = {
             punchCardSection(
                 vm, habits, weekStart,
+                compact = !wide,
                 adding = adding,
                 editingId = editingId,
                 onAdd = { adding = true; editingId = null },
@@ -110,7 +116,7 @@ fun TasksScreen(vm: TasksViewModel, wide: Boolean) {
                 onDone = { adding = false; editingId = null },
             )
         }
-        val list: LazyListScope.() -> Unit = { todoSection(vm, todos) }
+        val list: LazyListScope.() -> Unit = { todoSection(vm, todos, compact = !wide) }
         val pad = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 24.dp)
         if (wide) {
             Row(Modifier.padding(padding).fillMaxSize()) {
@@ -133,13 +139,15 @@ private fun LazyListScope.punchCardSection(
     vm: TasksViewModel,
     habits: List<HabitWeek>,
     weekStart: LocalDate,
+    compact: Boolean,
     adding: Boolean,
     editingId: Long?,
     onAdd: () -> Unit,
     onEdit: (Habit) -> Unit,
     onDone: () -> Unit,
 ) {
-    item(key = "week-header") { WeekHeader(vm, weekStart) }
+    // Compact: adding a punch card is a small + beside the week arrows, not its own row.
+    item(key = "week-header") { WeekHeader(vm, weekStart, onAdd = if (compact && !adding) onAdd else null) }
     if (habits.isEmpty()) {
         item(key = "no-habits") {
             Text(
@@ -162,7 +170,7 @@ private fun LazyListScope.punchCardSection(
         item(key = "new-habit") {
             HabitEditor(null, onCancel = onDone) { name, color, target -> vm.addHabit(name, color, target); onDone() }
         }
-    } else item(key = "add-habit") {
+    } else if (!compact) item(key = "add-habit") {
         FilledTonalButton(onClick = onAdd, modifier = Modifier.testTag(TAG_ADD_HABIT)) {
             Icon(Icons.Filled.Add, null)
             Spacer(Modifier.width(6.dp))
@@ -172,7 +180,7 @@ private fun LazyListScope.punchCardSection(
 }
 
 @Composable
-private fun WeekHeader(vm: TasksViewModel, weekStart: LocalDate) {
+private fun WeekHeader(vm: TasksViewModel, weekStart: LocalDate, onAdd: (() -> Unit)? = null) {
     val fmt = DateTimeFormatter.ofPattern("MMM d")
     Row(verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
@@ -190,6 +198,11 @@ private fun WeekHeader(vm: TasksViewModel, weekStart: LocalDate) {
         }
         IconButton(onClick = vm::nextWeek, modifier = Modifier.testTag("week-next")) {
             Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, "Next week")
+        }
+        if (onAdd != null) {
+            FilledTonalIconButton(onClick = onAdd, modifier = Modifier.size(36.dp).testTag(TAG_ADD_HABIT)) {
+                Icon(Icons.Filled.Add, "Add punch card", Modifier.size(20.dp))
+            }
         }
     }
 }
@@ -358,7 +371,7 @@ private fun HabitEditor(initial: Habit?, onCancel: () -> Unit, onSave: (String, 
     }
 }
 
-private fun LazyListScope.todoSection(vm: TasksViewModel, todos: List<Todo>) {
+private fun LazyListScope.todoSection(vm: TasksViewModel, todos: List<Todo>, compact: Boolean) {
     val open = todos.filterNot { it.done }
     val done = todos.filter { it.done }.sortedByDescending { it.doneAt ?: 0 }
     item(key = "todo-header") {
@@ -367,7 +380,7 @@ private fun LazyListScope.todoSection(vm: TasksViewModel, todos: List<Todo>) {
             if (open.isNotEmpty()) Text("${open.size} left", color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
-    item(key = "todo-input") { TodoInput(vm) }
+    item(key = "todo-input") { if (compact) CompactTodoInput(vm) else TodoInput(vm) }
     items(open, key = { "todo-${it.id}" }) { TodoRow(it, vm) }
     if (done.isNotEmpty()) {
         item(key = "done-header") { DoneHeader(done.size, vm) }
@@ -395,6 +408,42 @@ private fun TodoInput(vm: TasksViewModel) {
         },
         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).testTag(TAG_TODO_INPUT),
     )
+}
+
+/** A slim one-line add bar for the cover screen. */
+@Composable
+private fun CompactTodoInput(vm: TasksViewModel) {
+    var text by rememberSaveable { mutableStateOf("") }
+    val add = { vm.addTodo(text); text = "" }
+    val cs = MaterialTheme.colorScheme
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .height(40.dp)
+            .clip(RoundedCornerShape(50))
+            .background(cs.surfaceContainerHigh),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        BasicTextField(
+            value = text,
+            onValueChange = { text = it },
+            singleLine = true,
+            textStyle = MaterialTheme.typography.bodyMedium.copy(color = cs.onSurface),
+            cursorBrush = SolidColor(cs.primary),
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+            keyboardActions = KeyboardActions(onDone = { add() }),
+            decorationBox = { inner ->
+                Box(contentAlignment = Alignment.CenterStart) {
+                    if (text.isEmpty()) Text("Add a to-do", style = MaterialTheme.typography.bodyMedium, color = cs.onSurfaceVariant)
+                    inner()
+                }
+            },
+            modifier = Modifier.weight(1f).padding(start = 16.dp).testTag(TAG_TODO_INPUT),
+        )
+        IconButton(onClick = add, enabled = text.isNotBlank(), modifier = Modifier.size(40.dp).testTag("todo-add")) {
+            Icon(Icons.Filled.Add, "Add to-do", Modifier.size(20.dp))
+        }
+    }
 }
 
 @Composable
