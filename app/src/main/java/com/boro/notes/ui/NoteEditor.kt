@@ -115,7 +115,7 @@ const val TAG_NOTE_PAPER = "notePaper"
  * formatting bar. Reports every change (debounced) as document JSON plus plain text.
  */
 @Composable
-fun NoteEditor(
+internal fun NoteEditor(
     note: EditorState,
     onChange: (content: String, plain: String) -> Unit,
     wide: Boolean,
