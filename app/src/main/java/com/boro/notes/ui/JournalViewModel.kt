@@ -79,6 +79,8 @@ class JournalViewModel(
     val drafts: StateFlow<Map<Long, EditorState>> = _drafts.asStateFlow()
     private val saveJobs = mutableMapOf<Long, Job>()
     private val days = mutableMapOf<Long, Long>()
+    /** Pages sent to the Trash: never dropped as blank, even before storage catches up. */
+    private val trashed = mutableSetOf<Long>()
 
     /** Pages in reading order: oldest first, like a book. */
     fun bookOrder(list: List<JournalPage> = pages.value): List<JournalPage> = list.reversed()
@@ -142,6 +144,7 @@ class JournalViewModel(
     }
 
     fun trashSpreadPage(id: Long) {
+        trashed += id
         saveJobs.remove(id)?.cancel()
         val state = _drafts.value[id]
         _drafts.value = _drafts.value - id
@@ -154,7 +157,7 @@ class JournalViewModel(
 
     private fun dropBlankSpreadPages() {
         spreadPages().forEach { p ->
-            if (_page.value?.id != p.id && isBlank(stateOf(p))) {
+            if (_page.value?.id != p.id && p.id !in trashed && isBlank(stateOf(p))) {
                 saveJobs.remove(p.id)?.cancel()
                 _drafts.value = _drafts.value - p.id
                 viewModelScope.launch { repo.deletePage(p.id) }
@@ -288,6 +291,7 @@ class JournalViewModel(
         val p = _page.value ?: return
         saveJob?.cancel()
         _page.value = null
+        trashed += p.id
         _drafts.value = _drafts.value - p.id
         viewModelScope.launch {
             repo.savePage(p.id, p.title, p.body, p.content)

@@ -142,24 +142,28 @@ class JournalViewModelTest {
         advanceUntilIdle()
         assertTrue(vm.bookView.value) // unfolded books open straight into book view
 
-        // Three pages: two on the first spread, the third alone on the next.
-        repeat(3) { vm.addPage(); advanceUntilIdle() }
-        val order = vm.bookOrder()
-        assertEquals(3, order.size)
-        assertEquals(2, vm.spreadStart()) // turned to the newest page
-        vm.turnTo(0)
-        assertEquals(order.take(2).map { it.id }, vm.spreadPages().map { it.id })
-
         // Both facing pages are written in place, neither one primary.
-        vm.spreadTitle(order[0], "Left")
-        vm.spreadTitle(order[1], "Right")
+        vm.addPage()
         advanceUntilIdle()
-        assertEquals(listOf("Left", "Right"), vm.bookOrder().take(2).map { it.title })
+        vm.spreadTitle(vm.bookOrder()[0], "Left")
+        vm.addPage()
+        advanceUntilIdle()
+        assertEquals(2, vm.spreadPages().size)
+        vm.spreadTitle(vm.bookOrder()[1], "Right")
+        advanceUntilIdle()
+        assertEquals(listOf("Left", "Right"), vm.bookOrder().map { it.title })
 
-        // Turning on and back again: the third page was blank, so it's dropped on the way.
-        vm.turnTo(2)
+        // A third page goes on the next spread.
+        vm.addPage()
+        advanceUntilIdle()
+        assertEquals(3, vm.bookOrder().size)
+        assertEquals(2, vm.spreadStart())
+        assertEquals(listOf(vm.bookOrder()[2].id), vm.spreadPages().map { it.id })
+
+        // Turning back: the third page was left blank, so it's dropped on the way.
         vm.turnTo(0)
         advanceUntilIdle()
+        assertEquals(listOf("Left", "Right"), vm.spreadPages().map { it.title })
         assertEquals(2, vm.bookOrder().size)
         // At the end of a full spread there's a blank spread to start the next page on.
         assertEquals(2, vm.lastSpread())
