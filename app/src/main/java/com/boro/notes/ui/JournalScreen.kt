@@ -687,7 +687,7 @@ private fun BookSpread(vm: JournalViewModel, book: Journal, pages: List<JournalP
                 } else {
                     SpreadPage(
                         vm, left, if (left != null) stateOf(left) else null, "left", ink, formatPinned, reading,
-                        onNewPage = vm::addPage,
+                        onNewPage = { vm.addPage() },
                         onDelete = { confirmDelete = it },
                         leading = {
                             IconButton(onClick = onBack, modifier = Modifier.testTag("journal-back-spread")) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Close the book", tint = ink) }
@@ -719,7 +719,7 @@ private fun BookSpread(vm: JournalViewModel, book: Journal, pages: List<JournalP
                 SpreadPage(
                     vm, right, if (right != null) stateOf(right) else null, "right", ink, formatPinned, reading,
                     // A new page goes on the right only once the left one exists.
-                    onNewPage = if (left != null) vm::addPage else null,
+                    onNewPage = if (left != null) ({ vm.addPage() }) else null,
                     onDelete = { confirmDelete = it },
                     leading = {},
                     trailing = {
