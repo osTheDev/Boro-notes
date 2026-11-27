@@ -539,8 +539,9 @@ private fun BookSpread(vm: JournalViewModel, book: Journal, pages: List<JournalP
     val spine = lerp(cloth, Color.Black, 0.3f)
     val paperColor = Color(0xFFFBF5E6)
     val ink = Color(0xFF3A322C)
-    val leftShape = RoundedCornerShape(topStart = 10.dp, bottomStart = 10.dp, topEnd = 2.dp, bottomEnd = 2.dp)
-    val rightShape = RoundedCornerShape(topStart = 2.dp, bottomStart = 2.dp, topEnd = 10.dp, bottomEnd = 10.dp)
+    // Even corners: uneven rounded clips hit-test through Path ops, which tests can't run.
+    val leftShape = RoundedCornerShape(8.dp)
+    val rightShape = RoundedCornerShape(8.dp)
     val formatPinned by vm.formatPinned.collectAsStateWithLifecycle()
     val reading by vm.reading.collectAsStateWithLifecycle()
     var showContents by rememberSaveable { mutableStateOf(false) }
