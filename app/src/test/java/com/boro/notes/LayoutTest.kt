@@ -75,8 +75,10 @@ class InnerScreenLayoutTest {
         val vm = NotesViewModel(repo, SavedStateHandle())
         rule.setContent { NotesScreen(vm) }
 
+        // Nothing open: notes fill the inner screen as cards, no empty half.
         rule.onNodeWithTag(TAG_LIST_PANE).assertIsDisplayed()
-        rule.onNodeWithTag(TAG_EMPTY_DETAIL).assertIsDisplayed()
+        rule.onNodeWithTag("${TAG_NOTE_PREFIX}1").assertIsDisplayed()
+        rule.onNodeWithTag(TAG_EMPTY_DETAIL).assertDoesNotExist()
 
         rule.onNodeWithTag("${TAG_NOTE_PREFIX}1").performClick()
         rule.waitForIdle()
