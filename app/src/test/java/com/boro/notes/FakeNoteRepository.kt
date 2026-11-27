@@ -15,6 +15,8 @@ class FakeNoteRepository(initial: List<Note> = emptyList()) : NoteRepository {
 
     override fun observeNotes(query: String): Flow<List<Note>> = notes.map { all ->
         all.filter {
+            it.deletedAt == null
+        }.filter {
             query.isBlank() || it.title.contains(query, ignoreCase = true) || it.body.contains(query, ignoreCase = true)
         }.sortedByDescending { it.updatedAt }
     }
@@ -38,5 +40,20 @@ class FakeNoteRepository(initial: List<Note> = emptyList()) : NoteRepository {
 
     override suspend fun delete(id: Long) {
         notes.value = notes.value.filterNot { it.id == id }
+    }
+
+    override suspend fun trash(id: Long) {
+        val at = ++clock
+        notes.value = notes.value.map { if (it.id == id) it.copy(deletedAt = at) else it }
+    }
+
+    override suspend fun restore(id: Long) {
+        notes.value = notes.value.map { if (it.id == id) it.copy(deletedAt = null) else it }
+    }
+
+    override fun observeTrash(): Flow<List<Note>> = notes.map { all -> all.filter { it.deletedAt != null } }
+
+    override suspend fun purgeTrash(before: Long) {
+        notes.value = notes.value.filterNot { (it.deletedAt ?: Long.MAX_VALUE) < before }
     }
 }

@@ -15,6 +15,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.ui.unit.dp
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoStories
 import androidx.compose.material.icons.filled.Checkroom
 import androidx.compose.material.icons.filled.EditNote
 import androidx.compose.material.icons.filled.Home
@@ -83,6 +84,7 @@ enum class Section(val label: String, val icon: ImageVector, val tag: String) {
     NOTES("Notes", Icons.Filled.EditNote, "navNotes"),
     DESIGNS("Designs", Icons.Filled.Checkroom, "navDesigns"),
     TASKS("Tasks", Icons.Filled.TaskAlt, "navTasks"),
+    JOURNAL("Journal", Icons.Filled.AutoStories, "navJournal"),
 }
 
 /** Top level: Home, Notes, Designs and Tasks, with a bottom bar on the cover screen and a side rail on the inner screen. */
@@ -91,11 +93,20 @@ fun BoroRoot(
     notesVm: NotesViewModel,
     designsVm: DesignsViewModel,
     tasksVm: TasksViewModel,
+    journalVm: JournalViewModel,
+    trashVm: TrashViewModel,
     look: LookSettings = LookSettings(),
     onLookChange: (LookSettings) -> Unit = {},
 ) {
     var section by rememberSaveable { mutableStateOf(Section.HOME) }
+    var trashOpen by rememberSaveable { mutableStateOf(false) }
     BackHandler(enabled = section != Section.HOME) { section = Section.HOME }
+    if (trashOpen) {
+        BackHandler { trashOpen = false }
+        TrashScreen(trashVm, onBack = { trashOpen = false })
+        return
+    }
+    val bookOpen = journalVm.openId.collectAsStateWithLifecycle().value != null
     val noteOpen = notesVm.editor.collectAsStateWithLifecycle().value != null
     val sketchOpen = designsVm.sketch.collectAsStateWithLifecycle().value != null
     val fullScreen by notesVm.fullScreen.collectAsStateWithLifecycle()
@@ -123,6 +134,7 @@ fun BoroRoot(
                         val designs by designsVm.all.collectAsStateWithLifecycle()
                         val habits by tasksVm.habits.collectAsStateWithLifecycle()
                         val todos by tasksVm.todos.collectAsStateWithLifecycle()
+                        val journals by journalVm.journals.collectAsStateWithLifecycle()
                         val todayIndex = tasksVm.todayDate().dayOfWeek.value - 1
                         HomeScreen(
                             stats = HomeStats(
@@ -131,15 +143,18 @@ fun BoroRoot(
                                 punchCards = habits.size,
                                 punchedToday = if (tasksVm.isThisWeek) habits.count { it.punched[todayIndex] } else 0,
                                 openTodos = todos.count { !it.done },
+                                journals = journals.size,
                             ),
                             look = look,
                             onLookChange = onLookChange,
                             onOpen = { section = it },
+                            onTrash = { trashOpen = true },
                         )
                     }
                     Section.NOTES -> NotesScreen(notesVm)
                     Section.DESIGNS -> DesignsScreen(designsVm, notesVm, wide)
                     Section.TASKS -> TasksScreen(tasksVm, wide)
+                    Section.JOURNAL -> JournalScreen(journalVm, wide)
                 }
             }
         }
@@ -164,6 +179,8 @@ fun BoroRoot(
             val showBar = when (section) {
                 Section.NOTES -> !noteOpen
                 Section.DESIGNS -> !sketchOpen
+                // An open book gets the whole cover screen (closed cover or pages).
+                Section.JOURNAL -> !bookOpen
                 Section.HOME, Section.TASKS -> true
             }
             Column(Modifier.fillMaxSize()) {

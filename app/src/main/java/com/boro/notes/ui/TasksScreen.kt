@@ -199,6 +199,8 @@ private fun PunchCard(week: HabitWeek, weekStart: LocalDate, today: LocalDate, v
     val h = week.habit
     val color = PUNCH_COLORS[h.color.mod(PUNCH_COLORS.size)]
     var menu by remember { mutableStateOf(false) }
+    var confirmDelete by remember { mutableStateOf(false) }
+    if (confirmDelete) ConfirmDeleteDialog("this punch card", toTrash = false, onConfirm = { vm.deleteHabit(h.id) }, onDismiss = { confirmDelete = false })
     Card(
         colors = CardDefaults.cardColors(containerColor = color.copy(alpha = 0.10f)),
         shape = RoundedCornerShape(18.dp),
@@ -233,7 +235,7 @@ private fun PunchCard(week: HabitWeek, weekStart: LocalDate, today: LocalDate, v
                         DropdownMenuItem(text = { Text("Move down") }, onClick = { menu = false; vm.moveHabit(h.id, 1) })
                         DropdownMenuItem(
                             text = { Text("Delete", color = MaterialTheme.colorScheme.error) },
-                            onClick = { menu = false; vm.deleteHabit(h.id) },
+                            onClick = { menu = false; confirmDelete = true },
                         )
                     }
                 }
@@ -409,6 +411,8 @@ private fun DoneHeader(count: Int, vm: TasksViewModel) {
 @Composable
 private fun TodoRow(todo: Todo, vm: TasksViewModel) {
     var menu by remember { mutableStateOf(false) }
+    var confirmDelete by remember { mutableStateOf(false) }
+    if (confirmDelete) ConfirmDeleteDialog("this to-do", toTrash = false, onConfirm = { vm.deleteTodo(todo.id) }, onDismiss = { confirmDelete = false })
     var editing by remember { mutableStateOf(false) }
     if (editing) {
         // Edit in place: Done saves.
@@ -452,7 +456,7 @@ private fun TodoRow(todo: Todo, vm: TasksViewModel) {
                 }
                 DropdownMenuItem(
                     text = { Text("Delete", color = MaterialTheme.colorScheme.error) },
-                    onClick = { menu = false; vm.deleteTodo(todo.id) },
+                    onClick = { menu = false; confirmDelete = true },
                 )
             }
         }

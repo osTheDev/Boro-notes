@@ -24,7 +24,16 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.FormatIndentDecrease
 import androidx.compose.material.icons.automirrored.filled.FormatIndentIncrease
 import androidx.compose.material.icons.automirrored.filled.FormatListBulleted
+import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AddPhotoAlternate
+import androidx.compose.material.icons.filled.AutoFixNormal
+import androidx.compose.material.icons.filled.Brush
+import androidx.compose.material.icons.filled.Draw
+import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.LineWeight
+import androidx.compose.material.icons.filled.UnfoldLess
+import androidx.compose.material.icons.filled.UnfoldMore
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Check
@@ -60,6 +69,12 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.platform.LocalContext
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -85,6 +100,8 @@ import com.boro.notes.notes.BoxFill
 import com.boro.notes.notes.CheckBlock
 import com.boro.notes.notes.ColumnsBlock
 import com.boro.notes.notes.DividerBlock
+import com.boro.notes.notes.DrawingBlock
+import com.boro.notes.notes.ImageBlock
 import com.boro.notes.notes.NoteDoc
 import com.boro.notes.notes.Paper
 import com.boro.notes.notes.PaperColor
@@ -137,6 +154,14 @@ internal fun FormattingBar(
     fun insert(block: Block, focusKey: String = block.id) {
         focusManager.clearFocus()
         editor.insert(block, focusKey)
+    }
+    // Photos come from the system photo picker (no storage permission needed) and are copied in.
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val pickPhoto = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) scope.launch {
+            importImage(context, uri)?.let { insert(ImageBlock(NoteDoc.newId(), it)) }
+        }
     }
 
     val showPill: @Composable () -> Unit = {
@@ -265,6 +290,13 @@ internal fun FormattingBar(
                         val c = ColumnsBlock(NoteDoc.newId(), listOf("", "", "")); insert(c, "${c.id}#0")
                     }
                     ToolButton(Icons.Filled.HorizontalRule, "Insert divider", "insert-divider") { insert(DividerBlock(NoteDoc.newId())) }
+                    ToolButton(Icons.Filled.AddPhotoAlternate, "Insert photo", "insert-image") {
+                        runCatching { pickPhoto.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
+                    }
+                    ToolButton(Icons.Filled.Draw, "Insert drawing", "insert-drawing") {
+                        editor.eraser = false
+                        insert(DrawingBlock(NoteDoc.newId()))
+                    }
                 }
                 // Page look.
                 ToolGroup(cs.surfaceVariant, cs.onSurfaceVariant) {
@@ -293,6 +325,8 @@ private fun BlockToolsRow(editor: DocEditor, block: Block) {
         is DividerBlock -> "Divider" to Icons.Filled.HorizontalRule
         is CheckBlock -> "Checklist" to Icons.Filled.CheckBox
         is TextBlock -> "Text" to Icons.Filled.TextFields
+        is ImageBlock -> "Photo" to Icons.Filled.Image
+        is DrawingBlock -> "Drawing" to Icons.Filled.Brush
     }
     Row(
         Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp, vertical = 4.dp),
@@ -323,6 +357,17 @@ private fun BlockToolsRow(editor: DocEditor, block: Block) {
                 }
             }
         }
+        if (block is ImageBlock) {
+            val img = { editor.latest(block) }
+            ToolGroup(cs.tertiaryContainer, cs.onTertiaryContainer) {
+                listOf("Small" to 0.4f, "Half" to 0.6f, "Full" to 1f).forEach { (name, w) ->
+                    ChipTool(name, "image-${name.lowercase()}", selected = img().width == w) {
+                        editor.update(editor.doc.replace(img().copy(width = w)))
+                    }
+                }
+            }
+        }
+        if (block is DrawingBlock) DrawingTools(editor, block)
         if (block is TableBlock) {
             val (r, c) = editor.focused?.substringAfter('@', "")?.split(',')?.map { it.toIntOrNull() ?: 0 }
                 ?.let { it.getOrElse(0) { 0 } to it.getOrElse(1) { 0 } } ?: (0 to 0)
@@ -345,6 +390,67 @@ private fun BlockToolsRow(editor: DocEditor, block: Block) {
             }
         }
     }
+}
+
+/** Pen colour wheel, pen size, eraser, undo, pad height and Done for the drawing being drawn on. */
+@Composable
+private fun DrawingTools(editor: DocEditor, block: DrawingBlock) {
+    val cs = MaterialTheme.colorScheme
+    val d = { editor.latest(block) }
+    ToolGroup(cs.primaryContainer, cs.onPrimaryContainer) {
+        ToolMenu(Icons.Filled.Brush, "Pen colour", "ink-colour", accent = Color(editor.inkColor)) { close ->
+            MenuLabel("Ink")
+            SwatchGrid(INK_COLORS.mapIndexed { i, c -> Swatch("Ink ${i + 1}", Color(c), "ink-$i", editor.inkColor == c && !editor.eraser) }) { s ->
+                editor.inkColor = INK_COLORS[s.tag.removePrefix("ink-").toInt()]
+                editor.eraser = false
+                close()
+            }
+        }
+        ToolMenu(Icons.Filled.LineWeight, "Pen size", "ink-size") { close ->
+            MenuLabel("Pen size")
+            listOf("Fine" to 2f, "Medium" to 4f, "Bold" to 7f, "Marker" to 12f).forEach { (name, w) ->
+                DropdownMenuItem(
+                    text = { Text(name) },
+                    leadingIcon = { Box(Modifier.size(28.dp), contentAlignment = Alignment.Center) { Box(Modifier.size(w.dp + 2.dp).background(Color(editor.inkColor), CircleShape)) } },
+                    trailingIcon = { if (editor.inkWidth == w) Icon(Icons.Filled.Check, null) },
+                    onClick = { editor.inkWidth = w; editor.eraser = false; close() },
+                    modifier = Modifier.testTag("ink-size-${name.lowercase()}"),
+                )
+            }
+        }
+        ToolButton(Icons.Filled.AutoFixNormal, "Eraser", "ink-eraser", selected = editor.eraser) { editor.eraser = !editor.eraser }
+        ToolButton(Icons.AutoMirrored.Filled.Undo, "Undo stroke", "ink-undo", enabled = block.strokes.isNotEmpty()) {
+            val cur = d()
+            if (cur.strokes.isNotEmpty()) editor.update(editor.doc.replace(cur.copy(strokes = cur.strokes.dropLast(1))))
+        }
+    }
+    ToolGroup(cs.secondaryContainer, cs.onSecondaryContainer) {
+        ToolButton(Icons.Filled.UnfoldMore, "Taller", "drawing-taller") {
+            editor.update(editor.doc.replace(d().copy(height = (d().height + 80).coerceAtMost(1200))))
+        }
+        ToolButton(Icons.Filled.UnfoldLess, "Shorter", "drawing-shorter") {
+            editor.update(editor.doc.replace(d().copy(height = (d().height - 80).coerceAtLeast(120))))
+        }
+    }
+    ToolGroup(cs.primary, cs.onPrimary) {
+        LabeledTool(Icons.Filled.Check, "Done", "drawing-done") { editor.focused = null; editor.eraser = false }
+    }
+}
+
+/** A word-only tool, e.g. a photo size. */
+@Composable
+private fun ChipTool(label: String, tag: String, selected: Boolean, onClick: () -> Unit) {
+    val tint = LocalContentColor.current
+    Box(
+        Modifier
+            .height(42.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(if (selected) tint.copy(alpha = 0.18f) else Color.Transparent)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp)
+            .testTag(tag),
+        contentAlignment = Alignment.Center,
+    ) { Text(label, style = MaterialTheme.typography.labelLarge, color = tint) }
 }
 
 /** Paper colour swatches, line pattern previews and the margin switch. */

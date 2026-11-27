@@ -13,7 +13,9 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
@@ -111,7 +113,7 @@ class NotesViewModelTest {
     }
 
     @Test
-    fun deleteRemovesNoteAndClosesEditor() = runTest(dispatcher) {
+    fun deleteMovesNoteToTrashAndClosesEditor() = runTest(dispatcher) {
         val repo = FakeNoteRepository(listOf(Note(id = 1, title = "Gone")))
         val vm = NotesViewModel(repo, SavedStateHandle())
         vm.open(1)
@@ -121,6 +123,12 @@ class NotesViewModelTest {
         advanceUntilIdle()
 
         assertNull(vm.editor.value)
-        assertNull(repo.get(1))
+        // In the Trash (restorable), not in the list.
+        assertNotNull(repo.get(1)?.deletedAt)
+        assertTrue(vm.notes.value.none { it.id == 1L })
+
+        repo.restore(1)
+        advanceUntilIdle()
+        assertTrue(vm.notes.value.any { it.id == 1L })
     }
 }

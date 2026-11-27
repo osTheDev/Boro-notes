@@ -404,6 +404,8 @@ private fun StagePicker(stage: Stage, onPick: (Stage) -> Unit) {
 @Composable
 private fun EditorOverflow(vm: DesignsViewModel) {
     var open by remember { mutableStateOf(false) }
+    var confirmDelete by remember { mutableStateOf(false) }
+    if (confirmDelete) ConfirmDeleteDialog("this design", onConfirm = vm::deleteOpenDesign, onDismiss = { confirmDelete = false })
     Box {
         IconButton(onClick = { open = true }) { Icon(Icons.Filled.MoreVert, contentDescription = "More") }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
@@ -412,7 +414,7 @@ private fun EditorOverflow(vm: DesignsViewModel) {
             DropdownMenuItem(
                 text = { Text("Delete design") },
                 leadingIcon = { Icon(Icons.Filled.Delete, contentDescription = null) },
-                onClick = { vm.deleteOpenDesign(); open = false },
+                onClick = { open = false; confirmDelete = true },
             )
         }
     }

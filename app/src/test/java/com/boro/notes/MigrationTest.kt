@@ -114,4 +114,70 @@ class MigrationTest {
             database.close()
         }
     }
+
+    @Test
+    fun version4UpgradeAddsJournalsAndTrash() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val name = "migration-test-v4.db"
+        context.deleteDatabase(name)
+        val file = context.getDatabasePath(name).apply { parentFile?.mkdirs() }
+
+        SQLiteDatabase.openOrCreateDatabase(file, null).use { db ->
+            db.execSQL(
+                "CREATE TABLE IF NOT EXISTS `notes` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                    "`title` TEXT NOT NULL, `body` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, `content` TEXT)"
+            )
+            db.execSQL(
+                "CREATE TABLE IF NOT EXISTS `designs` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                    "`name` TEXT NOT NULL, `stage` TEXT NOT NULL, `noteId` INTEGER, `shapes` TEXT NOT NULL, " +
+                    "`createdAt` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL)"
+            )
+            db.execSQL(
+                "CREATE TABLE IF NOT EXISTS `habits` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                    "`name` TEXT NOT NULL, `color` INTEGER NOT NULL, `target` INTEGER NOT NULL, " +
+                    "`position` INTEGER NOT NULL, `createdAt` INTEGER NOT NULL)"
+            )
+            db.execSQL("CREATE TABLE IF NOT EXISTS `habit_checks` (`habitId` INTEGER NOT NULL, `day` INTEGER NOT NULL, PRIMARY KEY(`habitId`, `day`))")
+            db.execSQL(
+                "CREATE TABLE IF NOT EXISTS `todos` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                    "`text` TEXT NOT NULL, `done` INTEGER NOT NULL, `position` INTEGER NOT NULL, " +
+                    "`createdAt` INTEGER NOT NULL, `doneAt` INTEGER)"
+            )
+            db.execSQL("INSERT INTO notes (title, body, createdAt, updatedAt, content) VALUES ('Kept', 'text', 1, 1, NULL)")
+            db.execSQL("INSERT INTO designs (name, stage, noteId, shapes, createdAt, updatedAt) VALUES ('Coat', 'IDEA', NULL, '[]', 1, 1)")
+            db.execSQL("INSERT INTO todos (text, done, position, createdAt, doneAt) VALUES ('Buy thread', 0, 0, 1, NULL)")
+            db.version = 4
+        }
+
+        val database = NoteDatabase.create(context, name)
+        try {
+            val note = database.noteDao().observe("").first().single()
+            assertEquals("Kept", note.title)
+            assertEquals(null, note.deletedAt)
+            assertEquals(listOf("Coat"), database.designDao().observeAll().first().map { it.name })
+            assertEquals(listOf("Buy thread"), database.taskDao().observeTodos().first().map { it.text })
+
+            // Trash hides a note until it's restored; old trash is purged.
+            database.noteDao().setDeleted(note.id, 10)
+            assertEquals(0, database.noteDao().observe("").first().size)
+            assertEquals(1, database.noteDao().observeTrash().first().size)
+            database.noteDao().purge(5)
+            assertEquals(1, database.noteDao().observeTrash().first().size)
+            database.noteDao().purge(11)
+            assertEquals(0, database.noteDao().observeTrash().first().size)
+
+            val journals = com.boro.notes.data.RoomJournalRepository(database.journalDao())
+            val id = journals.createJournal("Field guide", 2, 1)
+            val page = journals.createPage(id, 20_000)
+            journals.savePage(page, "Moss", "green", null)
+            assertEquals(listOf("Moss"), journals.observePages(id).first().map { it.title })
+            journals.trashJournal(id)
+            assertEquals(0, journals.observeJournals().first().size)
+            journals.purgeTrash(Long.MAX_VALUE)
+            assertEquals(0, journals.observeTrashedJournals().first().size)
+            assertEquals(null, journals.getPage(page))
+        } finally {
+            database.close()
+        }
+    }
 }

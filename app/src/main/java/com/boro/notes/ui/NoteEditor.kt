@@ -87,6 +87,8 @@ import com.boro.notes.notes.BoxFill
 import com.boro.notes.notes.CheckBlock
 import com.boro.notes.notes.ColumnsBlock
 import com.boro.notes.notes.DividerBlock
+import com.boro.notes.notes.DrawingBlock
+import com.boro.notes.notes.ImageBlock
 import com.boro.notes.notes.NoteDoc
 import com.boro.notes.notes.TableBlock
 import com.boro.notes.notes.TextBlock
@@ -139,6 +141,10 @@ internal class DocEditor(initial: NoteDoc) {
     var focused by mutableStateOf<String?>(null)
     /** A block to focus as soon as it's on screen (e.g. a new checklist item). */
     var pendingFocus by mutableStateOf<String?>(null)
+    /** Pen for drawing blocks. */
+    var inkColor by mutableStateOf(INK_COLORS[0])
+    var inkWidth by mutableStateOf(3f)
+    var eraser by mutableStateOf(false)
 
     init {
         ensureStates(initial)
@@ -184,6 +190,8 @@ internal class DocEditor(initial: NoteDoc) {
             is TableBlock -> b.rows.joinToString("\n") { it.joinToString("  ") }
             is ColumnsBlock -> b.columns.indices.joinToString("\n") { rich["${b.id}#$it"]?.annotatedString?.text ?: "" }
             is DividerBlock -> ""
+            is ImageBlock -> b.caption
+            is DrawingBlock -> b.caption
         }
     }.trim()
 
@@ -202,7 +210,7 @@ internal class DocEditor(initial: NoteDoc) {
         is TextBlock, is CheckBlock -> b.id
         is ColumnsBlock -> "${b.id}#${b.columns.lastIndex}"
         is TableBlock -> "${b.id}@${b.rowCount - 1},${b.columnCount - 1}"
-        is DividerBlock -> null
+        is DividerBlock, is ImageBlock, is DrawingBlock -> null
     }
 
     /** Moves the cursor (and keyboard) to the end of [key]. */
@@ -309,6 +317,8 @@ private fun NoteEditorContent(
                                 is TableBlock -> TableBlockView(editor, block, wide)
                                 is ColumnsBlock -> ColumnsBlockView(editor, block, wide)
                                 is DividerBlock -> DividerBlockView(editor, block)
+                                is ImageBlock -> ImageBlockView(editor, block)
+                                is DrawingBlock -> DrawingBlockView(editor, block)
                             }
                         }
                     }

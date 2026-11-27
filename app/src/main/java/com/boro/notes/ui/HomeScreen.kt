@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.BrightnessAuto
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Checkroom
 import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.EditNote
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Palette
@@ -81,6 +82,7 @@ data class HomeStats(
     val punchCards: Int = 0,
     val punchedToday: Int = 0,
     val openTodos: Int = 0,
+    val journals: Int = 0,
 )
 
 /** A home tile. [section] null means it's coming in a later update. */
@@ -97,11 +99,12 @@ private val TILES = listOf(
     HomeTile("DESIGNS", "Designs", Icons.Filled.Checkroom, 1, Section.DESIGNS),
     HomeTile("TASKS", "Tasks", Icons.Filled.TaskAlt, 2, Section.TASKS),
     HomeTile("SASHIKO", "Sashiko", Icons.Filled.Texture, 4, null),
-    HomeTile("JOURNAL", "Journal", Icons.Filled.AutoStories, 3, null),
+    HomeTile("JOURNAL", "Journal", Icons.Filled.AutoStories, 3, Section.JOURNAL),
 )
 
 const val TAG_HOME = "homeScreen"
 const val TAG_HOME_CUSTOMIZE = "homeCustomize"
+const val TAG_HOME_TRASH = "homeTrash"
 
 /** The landing page: a tile for each part of the app over a faint sashiko pattern. */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -111,6 +114,7 @@ fun HomeScreen(
     look: LookSettings,
     onLookChange: (LookSettings) -> Unit,
     onOpen: (Section) -> Unit,
+    onTrash: () -> Unit = {},
 ) {
     var customizing by remember { mutableStateOf(false) }
     val cs = MaterialTheme.colorScheme
@@ -134,6 +138,9 @@ fun HomeScreen(
                         style = MaterialTheme.typography.bodyMedium,
                         color = cs.onSurfaceVariant,
                     )
+                }
+                IconButton(onClick = onTrash, modifier = Modifier.testTag(TAG_HOME_TRASH)) {
+                    Icon(Icons.Filled.DeleteOutline, contentDescription = "Trash", tint = cs.onSurfaceVariant)
                 }
                 IconButton(onClick = { customizing = true }, modifier = Modifier.testTag(TAG_HOME_CUSTOMIZE)) {
                     Icon(Icons.Filled.Palette, contentDescription = "Customise look", tint = cs.primary)
@@ -178,6 +185,11 @@ private fun subtitleFor(tile: HomeTile, s: HomeStats): String = when (tile.key) 
         if (s.punchCards > 0) add("${s.punchedToday}/${s.punchCards} punched today")
         add(if (s.openTodos == 1) "1 to-do" else "${s.openTodos} to-dos")
     }.joinToString(" · ")
+    "JOURNAL" -> when (s.journals) {
+        0 -> "Start a book"
+        1 -> "1 book"
+        else -> "${s.journals} books"
+    }
     else -> "Coming soon"
 }
 

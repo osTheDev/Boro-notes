@@ -224,7 +224,8 @@ class DesignsViewModelTest {
         vm.addStroke(listOf(Pt(0f, 0f), Pt(3f, 0f)))
         vm.close()
         advanceUntilIdle()
-        assertEquals(1, designs.designs.value.size)
+        assertEquals(1, designs.designs.value.count { it.deletedAt == null })
+        assertEquals(1, designs.designs.value.count { it.deletedAt != null })
     }
 
     @Test

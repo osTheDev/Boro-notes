@@ -11,7 +11,7 @@ class FakeDesignRepository(initial: List<Design> = emptyList()) : DesignReposito
     private var nextId = (initial.maxOfOrNull { it.id } ?: 0) + 1
     private var clock = 1_000L
 
-    override fun observeDesigns(): Flow<List<Design>> = designs.map { it.sortedByDescending { d -> d.updatedAt } }
+    override fun observeDesigns(): Flow<List<Design>> = designs.map { it.filter { d -> d.deletedAt == null }.sortedByDescending { d -> d.updatedAt } }
     override suspend fun get(id: Long) = designs.value.find { it.id == id }
     override suspend fun create(): Long {
         val id = nextId++
@@ -25,5 +25,16 @@ class FakeDesignRepository(initial: List<Design> = emptyList()) : DesignReposito
     }
     override suspend fun delete(id: Long) {
         designs.value = designs.value.filterNot { it.id == id }
+    }
+    override suspend fun trash(id: Long) {
+        val at = ++clock
+        designs.value = designs.value.map { if (it.id == id) it.copy(deletedAt = at) else it }
+    }
+    override suspend fun restore(id: Long) {
+        designs.value = designs.value.map { if (it.id == id) it.copy(deletedAt = null) else it }
+    }
+    override fun observeTrash(): Flow<List<Design>> = designs.map { all -> all.filter { it.deletedAt != null } }
+    override suspend fun purgeTrash(before: Long) {
+        designs.value = designs.value.filterNot { (it.deletedAt ?: Long.MAX_VALUE) < before }
     }
 }

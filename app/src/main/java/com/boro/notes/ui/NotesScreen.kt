@@ -34,6 +34,9 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -182,6 +185,8 @@ internal fun EditorPane(
             }
         }
     }
+    var confirmDelete by remember { mutableStateOf(false) }
+    if (confirmDelete) ConfirmDeleteDialog("this note", onConfirm = vm::deleteOpenNote, onDismiss = { confirmDelete = false })
     val actions: @Composable () -> Unit = {
         Row(verticalAlignment = Alignment.CenterVertically) {
             extraActions()
@@ -189,7 +194,7 @@ internal fun EditorPane(
                 TextButton(onClick = onExpand, modifier = Modifier.testTag(TAG_EXPAND)) { Text("Full screen") }
             }
             if (showDelete) {
-                IconButton(onClick = vm::deleteOpenNote, modifier = Modifier.testTag(TAG_DELETE)) {
+                IconButton(onClick = { confirmDelete = true }, modifier = Modifier.testTag(TAG_DELETE)) {
                     Icon(Icons.Filled.Delete, contentDescription = "Delete note")
                 }
             }

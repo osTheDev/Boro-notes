@@ -9,6 +9,8 @@ import com.boro.notes.ui.BoroRoot
 import com.boro.notes.ui.DesignsViewModel
 import com.boro.notes.ui.NotesViewModel
 import com.boro.notes.ui.TasksViewModel
+import com.boro.notes.ui.JournalViewModel
+import com.boro.notes.ui.TrashViewModel
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.boro.notes.ui.theme.BoroTheme
@@ -24,7 +26,9 @@ class MainActivity : ComponentActivity() {
                 val notesVm: NotesViewModel = viewModel(factory = NotesViewModel.factory(app.repository))
                 val designsVm: DesignsViewModel = viewModel(factory = DesignsViewModel.factory(app.designs, app.repository))
                 val tasksVm: TasksViewModel = viewModel(factory = TasksViewModel.factory(app.tasks))
-                BoroRoot(notesVm, designsVm, tasksVm, look, app.look::update)
+                val journalVm: JournalViewModel = viewModel(factory = JournalViewModel.factory(app.journals))
+                val trashVm: TrashViewModel = viewModel(factory = TrashViewModel.factory(app.repository, app.designs, app.journals))
+                BoroRoot(notesVm, designsVm, tasksVm, journalVm, trashVm, look, app.look::update)
             }
         }
     }

@@ -73,6 +73,8 @@ data class NoteDoc(val blocks: List<Block>, val paper: Paper = Paper()) {
             is TableBlock -> b.rows.joinToString("\n") { it.joinToString("  ") }
             is ColumnsBlock -> b.columns.joinToString("\n", transform = htmlToText)
             is DividerBlock -> ""
+            is ImageBlock -> b.caption
+            is DrawingBlock -> b.caption
         }
     }.trim()
 
@@ -185,3 +187,22 @@ data class ColumnsBlock(override val id: String, val columns: List<String>, val 
 @Serializable
 @SerialName("divider")
 data class DividerBlock(override val id: String) : Block
+
+/** A photo stored in the app's files ([file] is its name in the images folder). [width] is the share of the page width. */
+@Serializable
+@SerialName("image")
+data class ImageBlock(override val id: String, val file: String, val caption: String = "", val width: Float = 1f) : Block
+
+/** A finger drawing. [height] is in dp; stroke x positions are fractions of the width so it scales across screens. */
+@Serializable
+@SerialName("drawing")
+data class DrawingBlock(
+    override val id: String,
+    val strokes: List<InkStroke> = emptyList(),
+    val height: Int = 280,
+    val caption: String = "",
+) : Block
+
+/** One stroke: colour (ARGB), width in dp, and points as x (fraction of width), y (dp) pairs. */
+@Serializable
+data class InkStroke(val color: Long, val width: Float, val points: List<Float>)

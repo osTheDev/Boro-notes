@@ -25,4 +25,6 @@ data class Design(
     val shapes: String = "[]",
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = createdAt,
+    /** When it was moved to the Trash; null while it's a live design. */
+    val deletedAt: Long? = null,
 )
