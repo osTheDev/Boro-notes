@@ -394,7 +394,8 @@ private fun Modifier.paperLines(paper: Paper, lineHeight: Dp, top: Dp, marginX: 
     val ink = MaterialTheme.colorScheme.onSurface
     val marginColor = Color(0xFFE57373)
     return drawBehind {
-        val step = lineHeight.toPx()
+        // Whole pixels, like the text's own lines (see onWholePixels), so the two never drift apart.
+        val step = kotlin.math.ceil(lineHeight.toPx())
         val y0 = top.toPx()
         val thin = 1.dp.toPx()
         val line = ink.copy(alpha = 0.14f)
@@ -452,7 +453,21 @@ internal fun richTextStyle(kind: TextKind): TextStyle {
         TextKind.QUOTE -> t.bodyLarge.copy(fontStyle = FontStyle.Italic)
         TextKind.BODY -> t.bodyLarge
     }
-    return base.copy(color = MaterialTheme.colorScheme.onSurface)
+    return base.copy(color = MaterialTheme.colorScheme.onSurface).onWholePixels()
+}
+
+/**
+ * Snaps the line height to whole pixels. Text rounds each line up to a whole pixel, so a line
+ * height of e.g. 62.6 px would set every line 0.4 px lower than the paper's ruled lines, and after
+ * ten or so lines the writing would sit visibly off them. Just under the whole pixel, so rounding
+ * up lands exactly on it.
+ */
+@Composable
+private fun TextStyle.onWholePixels(): TextStyle {
+    if (!lineHeight.isSp) return this
+    val density = LocalDensity.current
+    val whole = with(density) { kotlin.math.round(lineHeight.toPx()) }
+    return copy(lineHeight = with(density) { (whole - 0.002f).toSp() })
 }
 
 @OptIn(ExperimentalFoundationApi::class)
