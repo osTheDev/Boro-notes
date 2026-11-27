@@ -120,6 +120,9 @@ fun HomeScreen(
     val cs = MaterialTheme.colorScheme
     BoxWithConstraints(Modifier.fillMaxSize().background(cs.background).testTag(TAG_HOME)) {
         val columns = if (maxWidth >= 840.dp) 3 else 2
+        // Tiles share out the screen's height (within reason) instead of leaving a gap below.
+        val rows = (TILES.size + columns - 1) / columns
+        val tileHeight = ((maxHeight - 170.dp) / rows - 14.dp).coerceIn(140.dp, 260.dp)
         val pattern = cs.primary.copy(alpha = 0.07f)
         Canvas(Modifier.fillMaxSize()) { drawHomePattern(look.pattern, pattern, 36.dp.toPx()) }
         Column(
@@ -139,11 +142,17 @@ fun HomeScreen(
                         color = cs.onSurfaceVariant,
                     )
                 }
-                IconButton(onClick = onTrash, modifier = Modifier.testTag(TAG_HOME_TRASH)) {
-                    Icon(Icons.Filled.DeleteOutline, contentDescription = "Trash", tint = cs.onSurfaceVariant)
-                }
-                IconButton(onClick = { customizing = true }, modifier = Modifier.testTag(TAG_HOME_CUSTOMIZE)) {
-                    Icon(Icons.Filled.Palette, contentDescription = "Customise look", tint = cs.primary)
+                // The two header tools sit together on one small solid pill, clear of the pattern.
+                Row(
+                    Modifier.clip(RoundedCornerShape(50)).background(cs.surfaceContainerHigh),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    IconButton(onClick = onTrash, modifier = Modifier.testTag(TAG_HOME_TRASH)) {
+                        Icon(Icons.Filled.DeleteOutline, contentDescription = "Trash", tint = cs.onSurfaceVariant)
+                    }
+                    IconButton(onClick = { customizing = true }, modifier = Modifier.testTag(TAG_HOME_CUSTOMIZE)) {
+                        Icon(Icons.Filled.Palette, contentDescription = "Customise look", tint = cs.primary)
+                    }
                 }
             }
             Spacer(Modifier.height(4.dp))
@@ -155,11 +164,11 @@ fun HomeScreen(
                             subtitle = subtitleFor(tile, stats),
                             color = PUNCH_COLORS[(look.tileColors[tile.key] ?: tile.defaultColor).mod(PUNCH_COLORS.size)],
                             onClick = { tile.section?.let(onOpen) },
-                            // Tiles rise in one after another.
+                            height = tileHeight,
+                            // Tiles rise in one after another; a short last row stretches to fill it.
                             modifier = Modifier.weight(1f).popIn(r * columns + c),
                         )
                     }
-                    repeat(columns - row.size) { Spacer(Modifier.weight(1f)) }
                 }
             }
         }
@@ -195,12 +204,13 @@ private fun subtitleFor(tile: HomeTile, s: HomeStats): String = when (tile.key) 
 
 /** A coloured tile with a running-stitch border, like a sashiko patch. */
 @Composable
-private fun Tile(tile: HomeTile, subtitle: String, color: Color, onClick: () -> Unit, modifier: Modifier) {
+private fun Tile(tile: HomeTile, subtitle: String, color: Color, onClick: () -> Unit, height: Dp, modifier: Modifier) {
     val soon = tile.section == null
+    val big = height >= 200.dp
     val source = remember { MutableInteractionSource() }
     Box(
         modifier
-            .height(150.dp)
+            .height(height)
             .bounce(source)
             .alpha(if (soon) 0.55f else 1f)
             .clip(RoundedCornerShape(24.dp))
@@ -210,7 +220,7 @@ private fun Tile(tile: HomeTile, subtitle: String, color: Color, onClick: () -> 
             .padding(18.dp)
             .testTag("tile-${tile.key.lowercase()}"),
     ) {
-        Icon(tile.icon, contentDescription = null, tint = Color.White, modifier = Modifier.size(34.dp).align(Alignment.TopStart))
+        Icon(tile.icon, contentDescription = null, tint = Color.White, modifier = Modifier.size(if (big) 44.dp else 34.dp).align(Alignment.TopStart))
         if (soon) {
             Text(
                 "Soon",
@@ -224,8 +234,8 @@ private fun Tile(tile: HomeTile, subtitle: String, color: Color, onClick: () -> 
             )
         }
         Column(Modifier.align(Alignment.BottomStart)) {
-            Text(tile.label, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold, color = Color.White)
-            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = 0.85f), maxLines = 2)
+            Text(tile.label, style = if (big) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold, color = Color.White)
+            Text(subtitle, style = if (big) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = 0.85f), maxLines = 2)
         }
     }
 }

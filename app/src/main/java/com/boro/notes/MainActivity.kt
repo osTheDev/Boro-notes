@@ -28,7 +28,11 @@ class MainActivity : ComponentActivity() {
                 val tasksVm: TasksViewModel = viewModel(factory = TasksViewModel.factory(app.tasks))
                 val journalVm: JournalViewModel = viewModel(factory = JournalViewModel.factory(app.journals))
                 val trashVm: TrashViewModel = viewModel(factory = TrashViewModel.factory(app.repository, app.designs, app.journals))
-                BoroRoot(notesVm, designsVm, tasksVm, journalVm, trashVm, look, app.look::update)
+                // Sets the theme's text colour for everything below, so text without its own colour
+                // never falls back to black (unreadable in dark mode).
+                androidx.compose.material3.Surface(color = androidx.compose.material3.MaterialTheme.colorScheme.background) {
+                    BoroRoot(notesVm, designsVm, tasksVm, journalVm, trashVm, look, app.look::update)
+                }
             }
         }
     }
