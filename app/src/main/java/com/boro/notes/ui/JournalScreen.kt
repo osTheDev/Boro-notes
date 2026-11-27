@@ -603,10 +603,10 @@ private fun BookSpread(vm: JournalViewModel, book: Journal, pages: List<JournalP
     // The gesture below lives across recompositions; always call the latest versions.
     val onForward by rememberUpdatedState(::forward)
     val onBack2 by rememberUpdatedState(::back)
-    val density = androidx.compose.ui.platform.LocalDensity.current
+    val localDensity = androidx.compose.ui.platform.LocalDensity.current
     // A short drag (about a finger's width) or a quick flick turns the page.
-    val swipeDistance = with(density) { 48.dp.toPx() }
-    val flickSpeed = with(density) { 600.dp.toPx() }
+    val swipeDistance = with(localDensity) { 48.dp.toPx() }
+    val flickSpeed = with(localDensity) { 600.dp.toPx() }
 
     Column(
         Modifier
