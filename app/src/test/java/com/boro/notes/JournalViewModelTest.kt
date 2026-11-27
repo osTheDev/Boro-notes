@@ -14,6 +14,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -137,36 +138,45 @@ class JournalViewModelTest {
         assertEquals(0, TrashViewModel.daysLeft(0, now = 8 * day))
     }
 
-    @Test fun bookViewWritesBothPagesAndTurnsBySpreads() = runTest(dispatcher) {
+    @Test fun bookViewTurnsEndlesslyOntoFreshPages() = runTest(dispatcher) {
         vm.createJournal("Days", 0, 0)
         advanceUntilIdle()
         assertTrue(vm.bookView.value) // unfolded books open straight into book view
 
-        // Both facing pages are written in place, neither one primary.
-        vm.addPage()
-        advanceUntilIdle()
-        vm.spreadTitle(vm.bookOrder()[0], "Left")
-        vm.addPage()
+        // An empty book still shows two pages ready to write on.
+        vm.ensureSpread()
         advanceUntilIdle()
         assertEquals(2, vm.spreadPages().size)
-        vm.spreadTitle(vm.bookOrder()[1], "Right")
+        // Blank pages don't turn into more blank pages.
+        assertFalse(vm.turnForward())
+
+        // Both facing pages are written in place, neither one primary.
+        val (left, right) = vm.spreadPages()
+        vm.spreadTitle(left, "Left")
+        vm.spreadTitle(right, "Right")
         advanceUntilIdle()
         assertEquals(listOf("Left", "Right"), vm.bookOrder().map { it.title })
 
-        // A third page goes on the next spread.
-        vm.addPage()
+        // Past the end, a turn always gives two fresh pages.
+        assertTrue(vm.turnForward())
         advanceUntilIdle()
-        assertEquals(3, vm.bookOrder().size)
         assertEquals(2, vm.spreadStart())
-        assertEquals(listOf(vm.bookOrder()[2].id), vm.spreadPages().map { it.id })
-
-        // Turning back: the third page was left blank, so it's dropped on the way.
-        vm.turnTo(0)
+        assertEquals(4, vm.bookOrder().size)
+        vm.spreadTitle(vm.spreadPages()[0], "Third")
         advanceUntilIdle()
-        assertEquals(listOf("Left", "Right"), vm.spreadPages().map { it.title })
-        assertEquals(2, vm.bookOrder().size)
-        // At the end of a full spread there's a blank spread to start the next page on.
-        assertEquals(2, vm.lastSpread())
+        assertTrue(vm.turnForward())
+        advanceUntilIdle()
+        assertEquals(4, vm.spreadStart())
+        assertEquals(6, vm.bookOrder().size)
+
+        // Turning back drops the untouched pages left at the end.
+        assertTrue(vm.turnBack())
+        advanceUntilIdle()
+        assertEquals(listOf("Left", "Right", "Third", ""), vm.bookOrder().map { it.title })
+        assertTrue(vm.turnBack())
+        advanceUntilIdle()
+        assertEquals(listOf("Left", "Right", "Third"), vm.bookOrder().map { it.title })
+        assertFalse(vm.turnBack())
     }
 
     @Test fun chaptersStartAtAPageAndCanBeRemoved() = runTest(dispatcher) {

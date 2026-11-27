@@ -570,8 +570,9 @@ private fun BookSpread(vm: JournalViewModel, book: Journal, pages: List<JournalP
     BackHandler(enabled = showContents) { showContents = false }
 
     val order = vm.bookOrder(pages)
-    val last = vm.lastSpread(pages.size)
-    val start = if (spreadAt < 0 || spreadAt > last) last else spreadAt
+    val start = remember(spreadAt, pages.size) { vm.spreadStart(pages.size) }
+    // Both pages of the spread always exist to write on, past the end of the book too.
+    LaunchedEffect(start, pages.size, reading) { vm.ensureSpread() }
     val left = order.getOrNull(start)
     val right = order.getOrNull(start + 1)
     fun stateOf(p: JournalPage) = open?.takeIf { it.id == p.id } ?: drafts[p.id] ?: EditorState(p.id, p.title, p.body, p.content)
@@ -583,11 +584,11 @@ private fun BookSpread(vm: JournalViewModel, book: Journal, pages: List<JournalP
     LaunchedEffect(hint) { if (hint != null) { delay(2200); hint = null } }
     // No turning animation: the pages' text and numbers simply change.
     fun forward() {
-        if (start + 2 <= last) { showContents = false; vm.turnTo(start + 2) }
-        else hint = "This is the end of the book. Tap New page to keep writing"
+        if (vm.turnForward()) showContents = false
+        else hint = "Write on these pages to turn to fresh ones"
     }
     fun back() {
-        if (start > 0) { showContents = false; vm.turnTo(start - 2) }
+        if (vm.turnBack()) showContents = false
         else hint = "This is the first page"
     }
     // The gesture below lives across recompositions; always call the latest versions.
@@ -687,7 +688,6 @@ private fun BookSpread(vm: JournalViewModel, book: Journal, pages: List<JournalP
                 } else {
                     SpreadPage(
                         vm, left, if (left != null) stateOf(left) else null, "left", ink, formatPinned, reading,
-                        onNewPage = { vm.addPage() },
                         onDelete = { confirmDelete = it },
                         leading = {
                             IconButton(onClick = onBack, modifier = Modifier.testTag("journal-back-spread")) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Close the book", tint = ink) }
@@ -718,8 +718,6 @@ private fun BookSpread(vm: JournalViewModel, book: Journal, pages: List<JournalP
             Box(Modifier.weight(1f).fillMaxHeight().clip(pageShape).background(paperColor).testTag(TAG_RIGHT_PAGE)) {
                 SpreadPage(
                     vm, right, if (right != null) stateOf(right) else null, "right", ink, formatPinned, reading,
-                    // A new page goes on the right only once the left one exists.
-                    onNewPage = if (left != null) ({ vm.addPage() }) else null,
                     onDelete = { confirmDelete = it },
                     leading = {},
                     trailing = {
@@ -743,7 +741,6 @@ private fun SpreadPage(
     ink: Color,
     formatPinned: Boolean,
     reading: Boolean,
-    onNewPage: (() -> Unit)?,
     onDelete: (JournalPage) -> Unit,
     leading: @Composable () -> Unit,
     trailing: @Composable () -> Unit,
@@ -793,13 +790,6 @@ private fun SpreadPage(
                         )
                     },
                 )
-            } else if (onNewPage != null && !reading) {
-                // The blank page after the last one: tap to start writing on it.
-                TextButton(onClick = onNewPage, modifier = Modifier.align(Alignment.Center).testTag("spread-new-$side")) {
-                    Icon(Icons.Filled.Add, null, tint = ink)
-                    Spacer(Modifier.width(6.dp))
-                    Text("New page", color = ink, fontFamily = FontFamily.Serif)
-                }
             }
         }
     }

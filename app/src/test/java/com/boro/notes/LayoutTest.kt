@@ -432,13 +432,10 @@ class InnerJournalLayoutTest {
         rule.onNodeWithTag(com.boro.notes.ui.TAG_BOOK_SPREAD).assertIsDisplayed()
         assertTrue(vm.bookView.value)
 
-        // An empty book: start a page on the left, then one on the right; both are written in place.
-        rule.onNodeWithTag("spread-new-left").performClick()
-        rule.waitForIdle()
+        // Even an empty book shows two pages ready to write on; both are written in place.
         rule.onNodeWithTag("spread-title-left").performTextReplacement("Moss walk")
-        rule.onNodeWithTag("spread-new-right").performClick()
-        rule.waitForIdle()
         rule.onNodeWithTag("spread-title-right").performTextReplacement("Lichen")
+        rule.waitForIdle()
         rule.onNodeWithTag("spread-date-left").assertIsDisplayed()
         rule.onNodeWithTag("spread-date-right").assertIsDisplayed()
 
@@ -479,7 +476,7 @@ class InnerJournalLayoutTest {
 
         val trashed = journals.pages.value.single { it.deletedAt != null }
         assertEquals("Lichen", trashed.title)
-        val page = journals.pages.value.single { it.deletedAt == null }
+        val page = journals.pages.value.single { it.deletedAt == null && it.title.isNotBlank() }
         assertEquals("Moss walk", page.title)
     }
 }

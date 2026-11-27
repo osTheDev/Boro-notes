@@ -25,6 +25,8 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.time.LocalDate
 
 /** Journals: a shelf of books, each with dated pages written like notes. */
@@ -63,7 +65,7 @@ class JournalViewModel(
         } else {
             _reading.value = false
             val left = spreadPages().firstOrNull()
-            dropBlankSpreadPages()
+            dropTrailingBlanks(keepFrom = null)
             if (left != null && !isBlank(stateOf(left))) openPage(left.id)
         }
     }
@@ -85,11 +87,14 @@ class JournalViewModel(
     /** Pages in reading order: oldest first, like a book. */
     fun bookOrder(list: List<JournalPage> = pages.value): List<JournalPage> = list.reversed()
 
-    /** The last spread: an odd page out sits alone on the left; a full last spread gets a blank one after it. */
-    fun lastSpread(count: Int = pages.value.size): Int = count / 2 * 2
+    /** The spread holding the last page (where a book opens), 0 for an empty book. */
+    fun latestSpread(count: Int = pages.value.size): Int = if (count == 0) 0 else (count - 1) / 2 * 2
+
+    /** The furthest spread: the first one past the last page (its pages are made as it's turned to). */
+    fun lastSpread(count: Int = pages.value.size): Int = (count + 1) / 2 * 2
 
     fun spreadStart(count: Int = pages.value.size): Int =
-        _spread.value.let { if (it < 0 || it > lastSpread(count)) lastSpread(count) else it }
+        _spread.value.let { if (it < 0) latestSpread(count) else it.coerceAtMost(lastSpread(count)) }
 
     /** The (up to two) pages on the spread now showing. */
     fun spreadPages(list: List<JournalPage> = pages.value): List<JournalPage> =
@@ -99,12 +104,51 @@ class JournalViewModel(
     fun stateOf(p: JournalPage): EditorState =
         _page.value?.takeIf { it.id == p.id } ?: _drafts.value[p.id] ?: EditorState(p.id, p.title, p.body, p.content)
 
-    /** Turns to the spread holding book page [index] (0 = first). Blank pages left behind are dropped. */
-    fun turnTo(index: Int) {
-        val target = (index.coerceIn(0, lastSpread()) / 2) * 2
-        if (target == spreadStart()) return
-        dropBlankSpreadPages()
+    /** Turns to the spread holding book page [index] (0 = first). Blank pages left at the end are dropped. */
+    fun turnTo(index: Int, count: Int = pages.value.size) {
+        val target = (index.coerceIn(0, lastSpread(count)) / 2) * 2
+        if (target == spreadStart(count)) return
+        dropTrailingBlanks(keepFrom = target)
         _spread.value = target
+        ensureSpread()
+    }
+
+    /**
+     * Turns the page: on through the book, and past the end onto two fresh pages, endlessly, as long
+     * as something is written on the pages showing. False when there's nothing to turn to.
+     */
+    fun turnForward(): Boolean {
+        val start = spreadStart()
+        val beyond = start + 2 < pages.value.size
+        if (!beyond && spreadPages().none { !isBlank(stateOf(it)) }) return false
+        turnTo(start + 2)
+        return true
+    }
+
+    fun turnBack(): Boolean {
+        val start = spreadStart()
+        if (start == 0) return false
+        turnTo(start - 2)
+        return true
+    }
+
+    /** Page changes run one at a time, so dropping and making pages never race each other. */
+    private val pageOps = Mutex()
+
+    /** Makes sure both pages of the showing spread exist, so they can be written on straight away. */
+    fun ensureSpread() {
+        val journal = _openId.value ?: return
+        if (!_bookView.value || _reading.value) return
+        viewModelScope.launch {
+            pageOps.withLock {
+                if (_openId.value != journal) return@withLock
+                val n = repo.observePages(journal).first().size
+                repeat((spreadStart(n) + 2 - n).coerceAtLeast(0)) {
+                    val day = today().toEpochDay()
+                    days[repo.createPage(journal, day)] = day
+                }
+            }
+        }
     }
 
     fun spreadTitle(p: JournalPage, title: String) = editSpreadPage(p) { it.copy(title = title) }
@@ -122,19 +166,26 @@ class JournalViewModel(
         }
     }
 
-    /** A new page at the end of the book, dated today, optionally starting a chapter; the book turns to it. */
+    /**
+     * The next fresh page at the end of the book, optionally starting a chapter there; the book turns
+     * to it. A blank page already waiting at the end is used rather than adding another.
+     */
     fun addPage(chapter: String? = null) {
         val journal = _openId.value ?: return
+        val name = chapter?.trim()?.takeIf { it.isNotEmpty() }
         viewModelScope.launch {
-            val day = today().toEpochDay()
-            val id = repo.createPage(journal, day)
-            chapter?.trim()?.takeIf { it.isNotEmpty() }?.let { repo.setChapter(id, it) }
-            days[id] = day
+            val id = pageOps.withLock {
+                val order = bookOrder(repo.observePages(journal).first())
+                val waiting = order.takeLastWhile { it.id !in trashed && isBlank(stateOf(it)) }.firstOrNull()
+                val id = waiting?.id ?: today().toEpochDay().let { day -> repo.createPage(journal, day).also { days[it] = day } }
+                if (name != null) repo.setChapter(id, name)
+                id
+            }
             val all = repo.observePages(journal).first()
             if (_openId.value != journal) return@launch
             val at = bookOrder(all).indexOfFirst { it.id == id }
-            if (at >= 0 && at / 2 * 2 != spreadStart(all.size)) dropBlankSpreadPages()
-            _spread.value = at / 2 * 2
+            if (at >= 0) turnTo(at, all.size)
+            ensureSpread()
         }
     }
 
@@ -155,14 +206,23 @@ class JournalViewModel(
         }
     }
 
-    private fun dropBlankSpreadPages() {
-        spreadPages().forEach { p ->
-            if (_page.value?.id != p.id && p.id !in trashed && isBlank(stateOf(p))) {
-                saveJobs.remove(p.id)?.cancel()
-                _drafts.value = _drafts.value - p.id
-                viewModelScope.launch { repo.deletePage(p.id) }
-            }
+    /**
+     * Drops the blank pages left at the end of the book (fresh pages turned past without writing),
+     * stopping at the spread from [keepFrom] on. Blank pages between written ones stay, like in a book.
+     */
+    private fun dropTrailingBlanks(keepFrom: Int?) {
+        val order = bookOrder()
+        val drop = mutableListOf<Long>()
+        for (i in order.indices.reversed()) {
+            val p = order[i]
+            if (keepFrom != null && i <= keepFrom + 1) break
+            if (_page.value?.id == p.id || p.id in trashed || !isBlank(stateOf(p))) break
+            drop += p.id
         }
+        if (drop.isEmpty()) return
+        drop.forEach { saveJobs.remove(it)?.cancel() }
+        _drafts.value = _drafts.value - drop.toSet()
+        viewModelScope.launch { pageOps.withLock { drop.forEach { repo.deletePage(it) } } }
     }
 
     /** Nothing written: no title, no text, and the paper untouched (a drawing or photo counts as written). */
@@ -212,7 +272,7 @@ class JournalViewModel(
 
     fun closeBook() {
         _reading.value = false
-        if (_bookView.value) dropBlankSpreadPages()
+        if (_bookView.value) dropTrailingBlanks(keepFrom = null)
         leavePage()
         clearBook()
         _openId.value = null
