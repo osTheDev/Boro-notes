@@ -27,7 +27,6 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
@@ -87,15 +86,23 @@ fun TasksScreen(vm: TasksViewModel, wide: Boolean) {
     val habits by vm.habits.collectAsStateWithLifecycle()
     val todos by vm.todos.collectAsStateWithLifecycle()
     val weekStart by vm.weekStart.collectAsStateWithLifecycle()
-    var editing by remember { mutableStateOf<Habit?>(null) }
-    var adding by remember { mutableStateOf(false) }
+    // Punch cards are added and edited in place (no pop-up), one at a time.
+    var editingId by rememberSaveable { mutableStateOf<Long?>(null) }
+    var adding by rememberSaveable { mutableStateOf(false) }
 
     Scaffold(
         modifier = Modifier.testTag(TAG_TASKS),
         topBar = { TopAppBar(title = { Text("Tasks") }) },
     ) { padding ->
         val cards: LazyListScope.() -> Unit = {
-            punchCardSection(vm, habits, weekStart, onAdd = { adding = true }, onEdit = { editing = it })
+            punchCardSection(
+                vm, habits, weekStart,
+                adding = adding,
+                editingId = editingId,
+                onAdd = { adding = true; editingId = null },
+                onEdit = { editingId = it.id; adding = false },
+                onDone = { adding = false; editingId = null },
+            )
         }
         val list: LazyListScope.() -> Unit = { todoSection(vm, todos) }
         val pad = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 24.dp)
@@ -114,24 +121,17 @@ fun TasksScreen(vm: TasksViewModel, wide: Boolean) {
         }
     }
 
-    if (adding) {
-        HabitDialog(null, onDismiss = { adding = false }) { name, color, target ->
-            vm.addHabit(name, color, target); adding = false
-        }
-    }
-    editing?.let { h ->
-        HabitDialog(h, onDismiss = { editing = null }) { name, color, target ->
-            vm.updateHabit(h.copy(name = name, color = color, target = target)); editing = null
-        }
-    }
 }
 
 private fun LazyListScope.punchCardSection(
     vm: TasksViewModel,
     habits: List<HabitWeek>,
     weekStart: LocalDate,
+    adding: Boolean,
+    editingId: Long?,
     onAdd: () -> Unit,
     onEdit: (Habit) -> Unit,
+    onDone: () -> Unit,
 ) {
     item(key = "week-header") { WeekHeader(vm, weekStart) }
     if (habits.isEmpty()) {
@@ -144,9 +144,19 @@ private fun LazyListScope.punchCardSection(
         }
     }
     items(habits, key = { "habit-${it.habit.id}" }) { week ->
-        PunchCard(week, weekStart, vm.todayDate(), vm, onEdit)
+        if (week.habit.id == editingId) {
+            HabitEditor(week.habit, onCancel = onDone) { name, color, target ->
+                vm.updateHabit(week.habit.copy(name = name, color = color, target = target)); onDone()
+            }
+        } else {
+            PunchCard(week, weekStart, vm.todayDate(), vm, onEdit)
+        }
     }
-    item(key = "add-habit") {
+    if (adding) {
+        item(key = "new-habit") {
+            HabitEditor(null, onCancel = onDone) { name, color, target -> vm.addHabit(name, color, target); onDone() }
+        }
+    } else item(key = "add-habit") {
         FilledTonalButton(onClick = onAdd, modifier = Modifier.testTag(TAG_ADD_HABIT)) {
             Icon(Icons.Filled.Add, null)
             Spacer(Modifier.width(6.dp))
@@ -266,70 +276,64 @@ private fun PunchDot(punched: Boolean, today: Boolean, color: Color, onClick: ()
 }
 
 @Composable
-private fun HabitDialog(initial: Habit?, onDismiss: () -> Unit, onSave: (String, Int, Int) -> Unit) {
+private fun HabitEditor(initial: Habit?, onCancel: () -> Unit, onSave: (String, Int, Int) -> Unit) {
     var name by rememberSaveable { mutableStateOf(initial?.name ?: "") }
     var color by rememberSaveable { mutableIntStateOf(initial?.color ?: 0) }
     var target by rememberSaveable { mutableIntStateOf(initial?.target ?: 7) }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(if (initial == null) "New punch card" else "Edit punch card") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedTextField(
-                    value = name,
-                    onValueChange = { name = it },
-                    label = { Text("What to do") },
-                    placeholder = { Text("e.g. Sketch a pocket") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth().testTag("habit-name"),
-                )
-                Text("Colour", style = MaterialTheme.typography.labelLarge)
-                // Plain rows (no scrolling): dialogs measure their content intrinsically.
-                PUNCH_COLORS.indices.chunked(4).forEach { row ->
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        row.forEach { i ->
-                            Box(
-                                Modifier
-                                    .size(32.dp)
-                                    .clip(CircleShape)
-                                    .background(PUNCH_COLORS[i])
-                                    .border(if (color == i) 3.dp else 0.dp, MaterialTheme.colorScheme.onSurface, CircleShape)
-                                    .clickable { color = i },
-                                contentAlignment = Alignment.Center,
-                            ) { if (color == i) Icon(Icons.Filled.Check, null, tint = Color.White, modifier = Modifier.size(16.dp)) }
-                        }
-                    }
+    val accent = PUNCH_COLORS[color.mod(PUNCH_COLORS.size)]
+    Card(
+        colors = CardDefaults.cardColors(containerColor = accent.copy(alpha = 0.10f)),
+        shape = RoundedCornerShape(18.dp),
+        modifier = Modifier.fillMaxWidth().testTag("habit-editor"),
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(if (initial == null) "New punch card" else "Edit punch card", style = MaterialTheme.typography.titleMedium)
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it },
+                placeholder = { Text("What to do, e.g. Sketch a pocket") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth().testTag("habit-name"),
+            )
+            Text("Colour", style = MaterialTheme.typography.labelLarge)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                PUNCH_COLORS.forEachIndexed { i, c ->
+                    Box(
+                        Modifier
+                            .size(30.dp)
+                            .clip(CircleShape)
+                            .background(c)
+                            .border(if (color == i) 3.dp else 0.dp, MaterialTheme.colorScheme.onSurface, CircleShape)
+                            .clickable { color = i },
+                        contentAlignment = Alignment.Center,
+                    ) { if (color == i) Icon(Icons.Filled.Check, null, tint = Color.White, modifier = Modifier.size(16.dp)) }
                 }
-                Text("Days per week", style = MaterialTheme.typography.labelLarge)
-                Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-                    for (n in 1..7) {
-                        val on = target == n
-                        Box(
-                            Modifier
-                                .size(30.dp)
-                                .clip(CircleShape)
-                                .background(if (on) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant)
-                                .clickable { target = n }
-                                .testTag("habit-target-$n"),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Text(
-                                "$n",
-                                style = MaterialTheme.typography.labelLarge,
-                                color = if (on) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
+            }
+            Text("Days per week", style = MaterialTheme.typography.labelLarge)
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                for (n in 1..7) {
+                    val on = target == n
+                    Box(
+                        Modifier
+                            .size(32.dp)
+                            .clip(CircleShape)
+                            .background(if (on) accent else MaterialTheme.colorScheme.surfaceVariant)
+                            .clickable { target = n }
+                            .testTag("habit-target-$n"),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text("$n", style = MaterialTheme.typography.labelLarge, color = if (on) Color.White else MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
-        },
-        confirmButton = {
-            TextButton(onClick = { onSave(name, color, target) }, enabled = name.isNotBlank(), modifier = Modifier.testTag("habit-save")) {
-                Text("Save")
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                TextButton(onClick = onCancel) { Text("Cancel") }
+                FilledTonalButton(onClick = { onSave(name, color, target) }, enabled = name.isNotBlank(), modifier = Modifier.testTag("habit-save")) {
+                    Text("Save")
+                }
             }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
-    )
+        }
+    }
 }
 
 private fun LazyListScope.todoSection(vm: TasksViewModel, todos: List<Todo>) {
@@ -386,6 +390,22 @@ private fun DoneHeader(count: Int, vm: TasksViewModel) {
 private fun TodoRow(todo: Todo, vm: TasksViewModel) {
     var menu by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf(false) }
+    if (editing) {
+        // Edit in place: Done saves.
+        var text by rememberSaveable { mutableStateOf(todo.text) }
+        val save = { vm.editTodo(todo, text); editing = false }
+        OutlinedTextField(
+            value = text,
+            onValueChange = { text = it },
+            singleLine = true,
+            shape = RoundedCornerShape(14.dp),
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+            keyboardActions = KeyboardActions(onDone = { save() }),
+            trailingIcon = { IconButton(onClick = save) { Icon(Icons.Filled.Check, "Save") } },
+            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        )
+        return
+    }
     Row(
         Modifier
             .fillMaxWidth()
@@ -417,16 +437,5 @@ private fun TodoRow(todo: Todo, vm: TasksViewModel) {
             }
         }
     }
-    if (editing) {
-        var text by rememberSaveable { mutableStateOf(todo.text) }
-        AlertDialog(
-            onDismissRequest = { editing = false },
-            title = { Text("Edit to-do") },
-            text = { OutlinedTextField(value = text, onValueChange = { text = it }, modifier = Modifier.fillMaxWidth()) },
-            confirmButton = {
-                TextButton(onClick = { vm.editTodo(todo, text); editing = false }, enabled = text.isNotBlank()) { Text("Save") }
-            },
-            dismissButton = { TextButton(onClick = { editing = false }) { Text("Cancel") } },
-        )
-    }
+
 }
