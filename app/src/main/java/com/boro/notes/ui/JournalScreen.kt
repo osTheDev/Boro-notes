@@ -745,6 +745,15 @@ private fun SpreadPage(
     leading: @Composable () -> Unit,
     trailing: @Composable () -> Unit,
 ) {
+    // Book pages are cream paper whatever the app theme, so the writing stays dark ink on them.
+    val cs = MaterialTheme.colorScheme
+    MaterialTheme(
+        colorScheme = cs.copy(
+            surface = Color(0xFFFBF5E6), onSurface = Color(0xFF1F1B16), onSurfaceVariant = Color(0xFF1F1B16).copy(alpha = 0.6f),
+            outline = Color(0xFF1F1B16).copy(alpha = 0.45f), outlineVariant = Color(0xFF1F1B16).copy(alpha = 0.25f),
+            primary = Color(0xFF3B5BA9),
+        ),
+    ) {
     Column(Modifier.fillMaxSize()) {
         PageHeader(ink) {
             leading()
@@ -792,6 +801,7 @@ private fun SpreadPage(
                 )
             }
         }
+    }
     }
 }
 

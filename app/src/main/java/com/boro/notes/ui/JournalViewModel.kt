@@ -102,7 +102,8 @@ class JournalViewModel(
 
     /** What a page shows: its unsaved edits if any, else what's stored. */
     fun stateOf(p: JournalPage): EditorState =
-        _page.value?.takeIf { it.id == p.id } ?: _drafts.value[p.id] ?: EditorState(p.id, p.title, p.body, p.content)
+        _page.value?.takeIf { it.id == p.id } ?: _drafts.value[p.id]
+            ?: EditorState(p.id, p.title, p.body, p.content ?: NEW_PAGE.takeIf { p.title.isBlank() && p.body.isBlank() })
 
     /** Turns to the spread holding book page [index] (0 = first). Blank pages left at the end are dropped. */
     fun turnTo(index: Int, count: Int = pages.value.size) {
@@ -132,6 +133,15 @@ class JournalViewModel(
         return true
     }
 
+    /** A fresh page at the end of the book, dated today, on the journal's notebook paper. */
+    private suspend fun newBookPage(journal: Long): Long {
+        val day = today().toEpochDay()
+        val id = repo.createPage(journal, day)
+        repo.savePage(id, "", "", NEW_PAGE)
+        days[id] = day
+        return id
+    }
+
     /** Page changes run one at a time, so dropping and making pages never race each other. */
     private val pageOps = Mutex()
 
@@ -143,10 +153,7 @@ class JournalViewModel(
             pageOps.withLock {
                 if (_openId.value != journal) return@withLock
                 val n = repo.observePages(journal).first().size
-                repeat((spreadStart(n) + 2 - n).coerceAtLeast(0)) {
-                    val day = today().toEpochDay()
-                    days[repo.createPage(journal, day)] = day
-                }
+                repeat((spreadStart(n) + 2 - n).coerceAtLeast(0)) { newBookPage(journal) }
             }
         }
     }
@@ -177,7 +184,7 @@ class JournalViewModel(
             val id = pageOps.withLock {
                 val order = bookOrder(repo.observePages(journal).first())
                 val waiting = order.takeLastWhile { it.id !in trashed && isBlank(stateOf(it)) }.firstOrNull()
-                val id = waiting?.id ?: today().toEpochDay().let { day -> repo.createPage(journal, day).also { days[it] = day } }
+                val id = waiting?.id ?: newBookPage(journal)
                 if (name != null) repo.setChapter(id, name)
                 id
             }
