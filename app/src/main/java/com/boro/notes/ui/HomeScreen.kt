@@ -57,7 +57,11 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Paint
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.DrawScope
@@ -272,22 +276,25 @@ fun DrawScope.drawHomePattern(pattern: HomePattern, color: Color, cell: Float) {
             }
         }
         HomePattern.SEIGAIHA -> {
-            // Seigaiha: overlapping fans of concentric arcs.
+            // Seigaiha: rings of waves, each row overlapping the one above. Drawn on a layer of its
+            // own, every ring first clears what's behind it, so the waves above stop at its edge
+            // instead of their lines running through.
             val r = cell * 0.75f
+            drawIntoCanvas { it.saveLayer(Rect(Offset.Zero, size), Paint()) }
             var row = 0
-            var y = r
+            var y = -r
             while (y < size.height + r * 2) {
                 var x = if (row % 2 == 0) 0f else r
                 while (x < size.width + r * 2) {
-                    for (k in 1..3) {
-                        val rr = r * k / 3f
-                        drawArc(color, 180f, 180f, false, Offset(x - rr, y - rr), Size(rr * 2, rr * 2), style = Stroke(w))
-                    }
+                    val c = Offset(x, y)
+                    drawCircle(Color.Black, r, c, blendMode = BlendMode.Clear)
+                    for (k in 1..3) drawCircle(color, r * k / 3f, c, style = Stroke(w))
                     x += r * 2
                 }
                 y += r / 2
                 row++
             }
+            drawIntoCanvas { it.restore() }
         }
         HomePattern.STITCH -> {
             // Rows of running stitch, alternating offset.
