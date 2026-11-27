@@ -8,6 +8,7 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.boro.notes.data.Habit
 import com.boro.notes.data.TaskRepository
 import com.boro.notes.data.Todo
+import com.boro.notes.data.Wish
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -20,6 +21,9 @@ import kotlinx.coroutines.launch
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.temporal.TemporalAdjusters
+
+/** Orders for the savings list. */
+enum class WishSort(val label: String) { MINE("My order"), CHEAPEST("Price: low to high"), DEAREST("Price: high to low") }
 
 /** A punch card for one week: which of Mon..Sun are punched. */
 data class HabitWeek(val habit: Habit, val punched: List<Boolean>) {
@@ -118,7 +122,72 @@ class TasksViewModel(
         viewModelScope.launch { repo.updateTodos(changed) }
     }
 
+    // ---- Saving up: things worth buying, with their prices ----
+
+    private val _wishSort = MutableStateFlow(WishSort.MINE)
+    /** How the savings list is ordered: your own order, or by price. */
+    val wishSort: StateFlow<WishSort> = _wishSort.asStateFlow()
+    fun setWishSort(sort: WishSort) { _wishSort.value = sort }
+
+    private val allWishes: StateFlow<List<Wish>> = repo.observeWishes()
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    /** Still saving for, in the chosen order. */
+    val wishes: StateFlow<List<Wish>> = combine(allWishes, _wishSort) { all, sort ->
+        val open = all.filter { it.boughtAt == null }
+        when (sort) {
+            WishSort.MINE -> open
+            WishSort.CHEAPEST -> open.sortedBy { it.price }
+            WishSort.DEAREST -> open.sortedByDescending { it.price }
+        }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    /** Bought, newest first. */
+    val bought: StateFlow<List<Wish>> = allWishes
+        .combine(_wishSort) { all, _ -> all.filter { it.boughtAt != null }.sortedByDescending { it.boughtAt } }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    fun addWish(name: String, price: String) {
+        val cents = parsePrice(price) ?: return
+        if (name.isBlank()) return
+        viewModelScope.launch { repo.addWish(name.trim(), cents) }
+    }
+
+    fun editWish(wish: Wish, name: String, price: String) {
+        val cents = parsePrice(price) ?: return
+        if (name.isBlank()) return
+        viewModelScope.launch { repo.updateWishes(listOf(wish.copy(name = name.trim(), price = cents))) }
+    }
+
+    fun toggleBought(wish: Wish) = viewModelScope.launch {
+        repo.updateWishes(listOf(wish.copy(boughtAt = if (wish.boughtAt == null) System.currentTimeMillis() else null)))
+    }
+
+    fun deleteWish(id: Long) = viewModelScope.launch { repo.deleteWish(id) }
+
+    fun clearBought() = viewModelScope.launch { repo.clearBought() }
+
+    /** Moves an item up (-1) or down (+1) in your own order (shown in your order while moving). */
+    fun moveWish(id: Long, by: Int) {
+        val open = allWishes.value.filter { it.boughtAt == null }.toMutableList()
+        val i = open.indexOfFirst { it.id == id }
+        val j = i + by
+        if (i < 0 || j !in open.indices) return
+        open.add(j, open.removeAt(i))
+        _wishSort.value = WishSort.MINE
+        val changed = open.mapIndexedNotNull { pos, w -> if (w.position != pos) w.copy(position = pos) else null }
+        viewModelScope.launch { repo.updateWishes(changed) }
+    }
+
     companion object {
+        /** "$1,299.50", "1299.5" or "40" → cents; null if it isn't a price. */
+        fun parsePrice(text: String): Long? {
+            val clean = text.filter { it.isDigit() || it == '.' }
+            if (clean.isEmpty() || clean.count { it == '.' } > 1) return null
+            return runCatching { clean.toBigDecimal().movePointRight(2).setScale(0, java.math.RoundingMode.HALF_UP).longValueExact() }
+                .getOrNull()?.takeIf { it >= 0 }
+        }
+
         fun mondayOf(date: LocalDate): LocalDate = date.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
 
         fun factory(repo: TaskRepository): ViewModelProvider.Factory = viewModelFactory {

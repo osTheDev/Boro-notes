@@ -74,6 +74,13 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.boro.notes.data.Habit
 import com.boro.notes.data.Todo
+import com.boro.notes.data.Wish
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.windowInsetsTopHeight
+import androidx.compose.material.icons.automirrored.filled.Sort
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.text.input.KeyboardType
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 
@@ -87,6 +94,10 @@ private val DAY_LETTERS = listOf("M", "T", "W", "T", "F", "S", "S")
 
 const val TAG_TASKS = "tasksScreen"
 const val TAG_ADD_HABIT = "addHabit"
+const val TAG_TASKS_STRIP = "tasksStrip"
+const val TAG_WISH_SORT = "wishSort"
+const val TAG_WISH_NAME = "wishName"
+const val TAG_WISH_PRICE = "wishPrice"
 const val TAG_TODO_INPUT = "todoInput"
 
 /** Weekly punch cards and the to-do list: side by side on the inner screen, stacked on the cover. */
@@ -96,14 +107,18 @@ fun TasksScreen(vm: TasksViewModel, wide: Boolean) {
     val habits by vm.habits.collectAsStateWithLifecycle()
     val todos by vm.todos.collectAsStateWithLifecycle()
     val weekStart by vm.weekStart.collectAsStateWithLifecycle()
+    val wishes by vm.wishes.collectAsStateWithLifecycle()
+    val bought by vm.bought.collectAsStateWithLifecycle()
+    val wishSort by vm.wishSort.collectAsStateWithLifecycle()
     // Punch cards are added and edited in place (no pop-up), one at a time.
     var editingId by rememberSaveable { mutableStateOf<Long?>(null) }
     var adding by rememberSaveable { mutableStateOf(false) }
 
     Scaffold(
         modifier = Modifier.testTag(TAG_TASKS),
-        // On the cover screen the section headers are enough; the list gets the height.
-        topBar = { if (wide) TopAppBar(title = { Text("Tasks") }) },
+        // No title bar: the section headers say what's what, and on the inner screen the strip by
+        // the camera (otherwise dead space) carries a one-line summary instead.
+        topBar = { if (wide) TasksStrip(habits, todos, wishes) },
     ) { padding ->
         val cards: LazyListScope.() -> Unit = {
             punchCardSection(
@@ -117,10 +132,15 @@ fun TasksScreen(vm: TasksViewModel, wide: Boolean) {
             )
         }
         val list: LazyListScope.() -> Unit = { todoSection(vm, todos, compact = !wide) }
+        val saving: LazyListScope.() -> Unit = { savingSection(vm, wishes, bought, wishSort) }
         val pad = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 24.dp)
         if (wide) {
             Row(Modifier.padding(padding).fillMaxSize()) {
-                LazyColumn(Modifier.weight(1f), contentPadding = pad, verticalArrangement = Arrangement.spacedBy(12.dp)) { cards() }
+                LazyColumn(Modifier.weight(1f), contentPadding = pad, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    cards()
+                    item { Spacer(Modifier.height(8.dp)) }
+                    saving()
+                }
                 VerticalDivider()
                 LazyColumn(Modifier.weight(1f), contentPadding = pad, verticalArrangement = Arrangement.spacedBy(4.dp)) { list() }
             }
@@ -129,6 +149,8 @@ fun TasksScreen(vm: TasksViewModel, wide: Boolean) {
                 cards()
                 item { Spacer(Modifier.padding(4.dp)) }
                 list()
+                item { Spacer(Modifier.padding(4.dp)) }
+                saving()
             }
         }
     }
@@ -512,3 +534,213 @@ private fun TodoRow(todo: Todo, vm: TasksViewModel) {
     }
 
 }
+
+/** The strip beside the camera on the inner screen: where things stand, in one quiet line. */
+@Composable
+private fun TasksStrip(habits: List<HabitWeek>, todos: List<Todo>, wishes: List<Wish>) {
+    val open = todos.count { !it.done }
+    Box(
+        Modifier.fillMaxWidth().windowInsetsTopHeight(WindowInsets.statusBars),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            listOfNotNull(
+                "Tasks",
+                if (habits.isNotEmpty()) "${habits.count { it.complete }}/${habits.size} cards full this week" else null,
+                if (open == 1) "1 to-do" else "$open to-dos",
+                if (wishes.isNotEmpty()) "saving for ${formatPrice(wishes.sumOf { it.price })}" else null,
+            ).joinToString("  ·  "),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.testTag(TAG_TASKS_STRIP),
+        )
+    }
+}
+
+/** "$40" or "$1,299.50", in the phone's currency. */
+internal fun formatPrice(cents: Long): String {
+    val f = java.text.NumberFormat.getCurrencyInstance()
+    if (cents % 100 == 0L) { f.minimumFractionDigits = 0; f.maximumFractionDigits = 0 }
+    return f.format(java.math.BigDecimal.valueOf(cents, 2))
+}
+
+/**
+ * Saving up: things you actually need or want, with what they cost, so the goal stays in view.
+ * In your own order (move them up and down) or sorted by price; bought ones fold away below.
+ */
+private fun LazyListScope.savingSection(vm: TasksViewModel, wishes: List<Wish>, bought: List<Wish>, sort: WishSort) {
+    val most = wishes.maxOfOrNull { it.price }?.takeIf { it > 0 } ?: 1L
+    item(key = "wish-header") {
+        var menu by remember { mutableStateOf(false) }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Saving up", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                if (wishes.isNotEmpty()) {
+                    Text(
+                        "${formatPrice(wishes.sumOf { it.price })} for ${if (wishes.size == 1) "1 thing" else "${wishes.size} things"} · ${sort.label}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            Box {
+                IconButton(onClick = { menu = true }, modifier = Modifier.testTag(TAG_WISH_SORT)) {
+                    Icon(Icons.AutoMirrored.Filled.Sort, "Sort")
+                }
+                DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                    WishSort.entries.forEach { s ->
+                        DropdownMenuItem(
+                            text = { Text(s.label) },
+                            trailingIcon = { if (s == sort) Icon(Icons.Filled.Check, null) },
+                            onClick = { vm.setWishSort(s); menu = false },
+                            modifier = Modifier.testTag("wish-sort-${s.name.lowercase()}"),
+                        )
+                    }
+                }
+            }
+        }
+    }
+    item(key = "wish-input") { WishInput(vm) }
+    if (wishes.isEmpty() && bought.isEmpty()) {
+        item(key = "no-wishes") {
+            Text(
+                "List the things worth saving for, with their price, to keep them in mind when little buys tempt you.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(vertical = 8.dp),
+            )
+        }
+    }
+    items(wishes, key = { "wish-${it.id}" }) { WishRow(it, vm, share = it.price.toFloat() / most, canMove = true) }
+    if (bought.isNotEmpty()) {
+        item(key = "bought-header") {
+            Column {
+                HorizontalDivider(Modifier.padding(top = 8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Bought (${bought.size})", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+                    TextButton(onClick = { vm.clearBought() }, modifier = Modifier.testTag("wish-clear")) { Text("Clear bought") }
+                }
+            }
+        }
+        items(bought, key = { "wish-${it.id}" }) { WishRow(it, vm, share = 0f, canMove = false) }
+    }
+}
+
+/** Name and price on one slim pill, then +. */
+@Composable
+private fun WishInput(vm: TasksViewModel) {
+    var name by rememberSaveable { mutableStateOf("") }
+    var price by rememberSaveable { mutableStateOf("") }
+    val ok = name.isNotBlank() && TasksViewModel.parsePrice(price) != null
+    val add = { if (ok) { vm.addWish(name, price); name = ""; price = "" } }
+    val cs = MaterialTheme.colorScheme
+    val style = MaterialTheme.typography.bodyMedium.copy(color = cs.onSurface)
+    Row(
+        Modifier.fillMaxWidth().height(40.dp).clip(RoundedCornerShape(50)).background(cs.surfaceContainerHigh),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        BasicTextField(
+            value = name,
+            onValueChange = { name = it },
+            singleLine = true,
+            textStyle = style,
+            cursorBrush = SolidColor(cs.primary),
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+            decorationBox = { inner ->
+                Box(contentAlignment = Alignment.CenterStart) {
+                    if (name.isEmpty()) Text("Something to save for", style = MaterialTheme.typography.bodyMedium, color = cs.onSurfaceVariant)
+                    inner()
+                }
+            },
+            modifier = Modifier.weight(1f).padding(start = 16.dp).testTag(TAG_WISH_NAME),
+        )
+        Box(Modifier.width(1.dp).height(22.dp).background(cs.outlineVariant))
+        BasicTextField(
+            value = price,
+            onValueChange = { price = it },
+            singleLine = true,
+            textStyle = style,
+            cursorBrush = SolidColor(cs.primary),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Done),
+            keyboardActions = KeyboardActions(onDone = { add() }),
+            decorationBox = { inner ->
+                Box(contentAlignment = Alignment.CenterStart) {
+                    if (price.isEmpty()) Text("Price", style = MaterialTheme.typography.bodyMedium, color = cs.onSurfaceVariant)
+                    inner()
+                }
+            },
+            modifier = Modifier.width(84.dp).padding(start = 12.dp).testTag(TAG_WISH_PRICE),
+        )
+        IconButton(onClick = add, enabled = ok, modifier = Modifier.size(40.dp).testTag("wish-add")) {
+            Icon(Icons.Filled.Add, "Add", Modifier.size(20.dp))
+        }
+    }
+}
+
+/** One thing to save for: a faint bar behind it shows its price against the dearest one. */
+@Composable
+private fun WishRow(wish: Wish, vm: TasksViewModel, share: Float, canMove: Boolean) {
+    var menu by remember { mutableStateOf(false) }
+    var confirmDelete by remember { mutableStateOf(false) }
+    var editing by remember { mutableStateOf(false) }
+    val cs = MaterialTheme.colorScheme
+    if (confirmDelete) ConfirmDeleteDialog("“${wish.name}”", toTrash = false, onConfirm = { vm.deleteWish(wish.id) }, onDismiss = { confirmDelete = false })
+    if (editing) {
+        var name by rememberSaveable { mutableStateOf(wish.name) }
+        var price by rememberSaveable { mutableStateOf(java.math.BigDecimal.valueOf(wish.price, 2).stripTrailingZeros().toPlainString()) }
+        val save = { if (name.isNotBlank() && TasksViewModel.parsePrice(price) != null) { vm.editWish(wish, name, price); editing = false } }
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(vertical = 4.dp)) {
+            OutlinedTextField(value = name, onValueChange = { name = it }, singleLine = true, shape = RoundedCornerShape(14.dp), modifier = Modifier.weight(1f))
+            OutlinedTextField(
+                value = price, onValueChange = { price = it }, singleLine = true, shape = RoundedCornerShape(14.dp),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = { save() }),
+                modifier = Modifier.width(110.dp),
+            )
+            IconButton(onClick = save) { Icon(Icons.Filled.Check, "Save") }
+        }
+        return
+    }
+    val done = wish.boughtAt != null
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .drawBehind {
+                if (share > 0f) drawRect(cs.primary.copy(alpha = 0.10f), size = androidx.compose.ui.geometry.Size(size.width * share.coerceIn(0f, 1f), size.height))
+            }
+            .padding(start = 14.dp)
+            .testTag("wish-${wish.id}"),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            wish.name,
+            style = MaterialTheme.typography.bodyLarge,
+            textDecoration = if (done) TextDecoration.LineThrough else null,
+            color = if (done) cs.onSurfaceVariant else cs.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f).padding(vertical = 12.dp),
+        )
+        Text(
+            formatPrice(wish.price),
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = if (done) cs.onSurfaceVariant else cs.primary,
+        )
+        Box {
+            IconButton(onClick = { menu = true }) { Icon(Icons.Filled.MoreVert, "Options") }
+            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                DropdownMenuItem(text = { Text(if (done) "Not bought yet" else "Bought it") }, onClick = { menu = false; vm.toggleBought(wish) }, modifier = Modifier.testTag("wish-bought"))
+                if (!done) {
+                    DropdownMenuItem(text = { Text("Edit") }, onClick = { menu = false; editing = true })
+                    if (canMove) {
+                        DropdownMenuItem(text = { Text("Move up") }, onClick = { menu = false; vm.moveWish(wish.id, -1) })
+                        DropdownMenuItem(text = { Text("Move down") }, onClick = { menu = false; vm.moveWish(wish.id, 1) })
+                    }
+                }
+                DropdownMenuItem(text = { Text("Delete", color = cs.error) }, onClick = { menu = false; confirmDelete = true })
+            }
+        }
+    }
+}
+

@@ -44,4 +44,18 @@ class FakeTaskRepository : TaskRepository {
     }
     override suspend fun deleteTodo(id: Long) { todos.value = todos.value.filterNot { it.id == id } }
     override suspend fun clearDone() { todos.value = todos.value.filterNot { it.done } }
+
+    val wishes = MutableStateFlow<List<com.boro.notes.data.Wish>>(emptyList())
+    override fun observeWishes(): Flow<List<com.boro.notes.data.Wish>> = wishes.map { it.sortedWith(compareBy({ w -> w.position }, { w -> w.id })) }
+    override suspend fun addWish(name: String, price: Long): Long {
+        val id = nextId++
+        wishes.value = wishes.value + com.boro.notes.data.Wish(id = id, name = name, price = price, position = (wishes.value.maxOfOrNull { it.position } ?: -1) + 1)
+        return id
+    }
+    override suspend fun updateWishes(wishes: List<com.boro.notes.data.Wish>) {
+        val byId = wishes.associateBy { it.id }
+        this.wishes.value = this.wishes.value.map { byId[it.id] ?: it }
+    }
+    override suspend fun deleteWish(id: Long) { wishes.value = wishes.value.filterNot { it.id == id } }
+    override suspend fun clearBought() { wishes.value = wishes.value.filter { it.boughtAt == null } }
 }

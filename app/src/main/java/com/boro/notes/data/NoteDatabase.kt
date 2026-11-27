@@ -7,7 +7,7 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [Note::class, Design::class, Habit::class, HabitCheck::class, Todo::class, Journal::class, JournalPage::class], version = 7, exportSchema = true)
+@Database(entities = [Note::class, Design::class, Habit::class, HabitCheck::class, Todo::class, Journal::class, JournalPage::class, Wish::class], version = 8, exportSchema = true)
 abstract class NoteDatabase : RoomDatabase() {
     abstract fun noteDao(): NoteDao
     abstract fun designDao(): DesignDao
@@ -88,9 +88,19 @@ abstract class NoteDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `wishes` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`name` TEXT NOT NULL, `price` INTEGER NOT NULL, `position` INTEGER NOT NULL, " +
+                        "`createdAt` INTEGER NOT NULL, `boughtAt` INTEGER)"
+                )
+            }
+        }
+
         fun create(context: Context, name: String = "boro-notes.db"): NoteDatabase =
             Room.databaseBuilder(context, NoteDatabase::class.java, name)
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
                 .build()
     }
 }

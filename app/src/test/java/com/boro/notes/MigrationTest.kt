@@ -237,6 +237,10 @@ class MigrationTest {
             assertEquals(null, book.paper)
             journals.updateJournal(book.copy(paper = "{}"))
             assertEquals("{}", journals.getJournal(1)?.paper)
+            // v8: the savings list.
+            val tasks = com.boro.notes.data.RoomTaskRepository(database.taskDao())
+            tasks.addWish("Coat", 12_000)
+            assertEquals(listOf("Coat"), tasks.observeWishes().first().map { it.name })
         } finally {
             database.close()
         }

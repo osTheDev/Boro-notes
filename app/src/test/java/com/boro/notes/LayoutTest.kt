@@ -354,6 +354,36 @@ class TasksLayoutTest {
     }
 }
 
+/** Tasks on the inner screen: a summary strip instead of a title bar, and the savings list. */
+@RunWith(AndroidJUnit4::class)
+@Config(sdk = [34], qualifiers = "w840dp-h780dp")
+class InnerTasksLayoutTest {
+    @get:Rule val rule = createComposeRule()
+
+    @Test
+    fun savingUpListAddsAndSorts() {
+        val repo = FakeTaskRepository()
+        val vm = com.boro.notes.ui.TasksViewModel(repo) { java.time.LocalDate.of(2026, 11, 26) }
+        rule.setContent { com.boro.notes.ui.TasksScreen(vm, wide = true) }
+
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_TASKS_STRIP).assertExists()
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_WISH_NAME).performTextReplacement("Indigo bolt")
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_WISH_PRICE).performTextReplacement("120")
+        rule.onNodeWithTag("wish-add").performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_WISH_NAME).performTextReplacement("Thimble")
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_WISH_PRICE).performTextReplacement("$8.50")
+        rule.onNodeWithTag("wish-add").performClick()
+        rule.waitForIdle()
+        assertEquals(listOf(12_000L, 850L), vm.wishes.value.map { it.price })
+
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_WISH_SORT).performClick()
+        rule.onNodeWithTag("wish-sort-cheapest").performClick()
+        rule.waitForIdle()
+        assertEquals(listOf("Thimble", "Indigo bolt"), vm.wishes.value.map { it.name })
+    }
+}
+
 @androidx.compose.runtime.Composable
 private fun testRoot(
     notesVm: NotesViewModel,

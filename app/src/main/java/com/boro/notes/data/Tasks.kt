@@ -38,6 +38,19 @@ data class Todo(
     val doneAt: Long? = null,
 )
 
+/** Something worth saving up for, with its price, so the real goals stay in view. */
+@Entity(tableName = "wishes")
+data class Wish(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val name: String,
+    /** Price in cents. */
+    val price: Long,
+    val position: Int = 0,
+    val createdAt: Long = System.currentTimeMillis(),
+    /** Set once it's bought. */
+    val boughtAt: Long? = null,
+)
+
 @Dao
 interface TaskDao {
     @Query("SELECT * FROM habits ORDER BY position, id")
@@ -90,6 +103,24 @@ interface TaskDao {
 
     @Query("DELETE FROM todos WHERE done = 1")
     suspend fun clearDone()
+
+    @Query("SELECT * FROM wishes ORDER BY position, id")
+    fun observeWishes(): Flow<List<Wish>>
+
+    @Query("SELECT COALESCE(MAX(position), -1) + 1 FROM wishes")
+    suspend fun nextWishPosition(): Int
+
+    @Insert
+    suspend fun insertWish(wish: Wish): Long
+
+    @Update
+    suspend fun updateWishes(wishes: List<Wish>)
+
+    @Query("DELETE FROM wishes WHERE id = :id")
+    suspend fun deleteWish(id: Long)
+
+    @Query("DELETE FROM wishes WHERE boughtAt IS NOT NULL")
+    suspend fun clearBought()
 }
 
 interface TaskRepository {
@@ -106,6 +137,13 @@ interface TaskRepository {
     suspend fun updateTodos(todos: List<Todo>)
     suspend fun deleteTodo(id: Long)
     suspend fun clearDone()
+
+    fun observeWishes(): Flow<List<Wish>>
+    /** New items go to the end of your order. */
+    suspend fun addWish(name: String, price: Long): Long
+    suspend fun updateWishes(wishes: List<Wish>)
+    suspend fun deleteWish(id: Long)
+    suspend fun clearBought()
 }
 
 class RoomTaskRepository(private val dao: TaskDao) : TaskRepository {
@@ -123,4 +161,10 @@ class RoomTaskRepository(private val dao: TaskDao) : TaskRepository {
     override suspend fun updateTodos(todos: List<Todo>) = dao.updateTodos(todos)
     override suspend fun deleteTodo(id: Long) = dao.deleteTodo(id)
     override suspend fun clearDone() = dao.clearDone()
+
+    override fun observeWishes() = dao.observeWishes()
+    override suspend fun addWish(name: String, price: Long) = dao.insertWish(Wish(name = name, price = price, position = dao.nextWishPosition()))
+    override suspend fun updateWishes(wishes: List<Wish>) = dao.updateWishes(wishes)
+    override suspend fun deleteWish(id: Long) = dao.deleteWish(id)
+    override suspend fun clearBought() = dao.clearBought()
 }
