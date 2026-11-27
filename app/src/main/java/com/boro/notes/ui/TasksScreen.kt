@@ -1,6 +1,12 @@
 package com.boro.notes.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.LocalIndication
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.Spring
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -258,20 +264,34 @@ private fun PunchCard(week: HabitWeek, weekStart: LocalDate, today: LocalDate, v
     }
 }
 
-/** A day on a punch card: an empty ring, or filled with a check once punched. Today has a thicker ring. */
+/** A day on a punch card: an empty ring that fills with a bouncy pop when punched. Today has a thicker ring. */
 @Composable
 private fun PunchDot(punched: Boolean, today: Boolean, color: Color, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    val fill by animateFloatAsState(
+        if (punched) 1f else 0f,
+        spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMediumLow),
+        label = "punch",
+    )
+    val source = remember { MutableInteractionSource() }
     Box(
         modifier
             .padding(vertical = 4.dp)
             .size(38.dp)
+            .bounce(source)
             .clip(CircleShape)
-            .background(if (punched) color else Color.Transparent)
             .border(if (today) 3.dp else 1.5.dp, color.copy(alpha = if (punched || today) 1f else 0.45f), CircleShape)
-            .clickable(onClick = onClick),
+            .clickable(interactionSource = source, indication = LocalIndication.current, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        if (punched) Icon(Icons.Filled.Check, contentDescription = "Punched", tint = Color.White, modifier = Modifier.size(20.dp))
+        Box(
+            Modifier
+                .size(38.dp)
+                .graphicsLayer { scaleX = fill; scaleY = fill; rotationZ = (1f - fill) * -45f }
+                .background(color, CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (punched) Icon(Icons.Filled.Check, contentDescription = "Punched", tint = Color.White, modifier = Modifier.size(20.dp))
+        }
     }
 }
 

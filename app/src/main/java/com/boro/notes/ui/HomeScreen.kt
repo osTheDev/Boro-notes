@@ -3,7 +3,9 @@ package com.boro.notes.ui
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -138,15 +140,16 @@ fun HomeScreen(
                 }
             }
             Spacer(Modifier.height(4.dp))
-            TILES.chunked(columns).forEach { row ->
+            TILES.chunked(columns).forEachIndexed { r, row ->
                 Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                    row.forEach { tile ->
+                    row.forEachIndexed { c, tile ->
                         Tile(
                             tile,
                             subtitle = subtitleFor(tile, stats),
                             color = PUNCH_COLORS[(look.tileColors[tile.key] ?: tile.defaultColor).mod(PUNCH_COLORS.size)],
                             onClick = { tile.section?.let(onOpen) },
-                            modifier = Modifier.weight(1f),
+                            // Tiles rise in one after another.
+                            modifier = Modifier.weight(1f).popIn(r * columns + c),
                         )
                     }
                     repeat(columns - row.size) { Spacer(Modifier.weight(1f)) }
@@ -182,14 +185,16 @@ private fun subtitleFor(tile: HomeTile, s: HomeStats): String = when (tile.key) 
 @Composable
 private fun Tile(tile: HomeTile, subtitle: String, color: Color, onClick: () -> Unit, modifier: Modifier) {
     val soon = tile.section == null
+    val source = remember { MutableInteractionSource() }
     Box(
         modifier
             .height(150.dp)
+            .bounce(source)
             .alpha(if (soon) 0.55f else 1f)
             .clip(RoundedCornerShape(24.dp))
             .background(Brush.linearGradient(listOf(color, lerpDark(color))))
             .stitchedBorder(Color.White.copy(alpha = 0.6f), inset = 7.dp, radius = 18.dp)
-            .clickable(enabled = !soon, onClick = onClick)
+            .clickable(interactionSource = source, indication = LocalIndication.current, enabled = !soon, onClick = onClick)
             .padding(18.dp)
             .testTag("tile-${tile.key.lowercase()}"),
     ) {
@@ -300,8 +305,8 @@ private fun CustomizeSheet(look: LookSettings, onChange: (LookSettings) -> Unit)
 
         SheetLabel("Theme")
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            ThemePreset.entries.forEach { t ->
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            ThemePreset.entries.forEachIndexed { i, t ->
+                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.popIn(i)) {
                     val selected = look.theme == t
                     Box(
                         Modifier
