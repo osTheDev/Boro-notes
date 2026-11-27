@@ -69,6 +69,8 @@ class JournalViewModel(
     val page: StateFlow<EditorState?> = _page.asStateFlow()
     private var pageDay: Long? = null
     private var saveJob: Job? = null
+    /** Pages left in this book, as last written: turning back to one shows it at once, without waiting on storage. */
+    private val visited = mutableMapOf<Long, Pair<EditorState, Long?>>()
 
     fun todayDate(): LocalDate = today()
 
@@ -90,12 +92,14 @@ class JournalViewModel(
     fun select(id: Long) {
         if (_openId.value == id) return
         leavePage()
+        visited.clear()
         _openId.value = id
     }
 
     fun closeBook() {
         _bookView.value = false
         leavePage()
+        visited.clear()
         _openId.value = null
     }
 
@@ -111,13 +115,24 @@ class JournalViewModel(
         }
     }
 
+    /**
+     * Swaps straight to the page (from what's already loaded when possible), so a page turn never
+     * passes through an empty moment. The page being left is saved, or dropped if blank, behind it.
+     */
     fun openPage(id: Long) {
         if (_page.value?.id == id) return
-        leavePage()
+        visited[id]?.let { (state, day) ->
+            if (state.title.isBlank() && state.body.isBlank()) return // dropped when it was left
+            show(state, day)
+            return
+        }
+        pages.value.firstOrNull { it.id == id }?.let { p ->
+            show(EditorState(p.id, p.title, p.body, p.content), p.day)
+            return
+        }
         viewModelScope.launch {
             val p = repo.getPage(id) ?: return@launch
-            pageDay = p.day
-            _page.value = EditorState(p.id, p.title, p.body, p.content)
+            show(EditorState(p.id, p.title, p.body, p.content), p.day)
         }
     }
 
@@ -128,24 +143,21 @@ class JournalViewModel(
         viewModelScope.launch {
             val existing = repo.observePages(journal).first().firstOrNull { it.day == day }
             if (existing != null) openPage(existing.id)
-            else if (_page.value?.let { pageDay == day } != true) {
-                leavePage()
-                startPage(journal, day)
-            }
+            else if (_page.value?.let { pageDay == day } != true) startPage(journal, day)
         }
     }
 
     /** A fresh page dated today, even if today already has one (turning to a blank page). */
     fun newPage() {
         val journal = _openId.value ?: return
-        leavePage()
+        // The current page stays up until the new one exists, then they swap in one step.
         viewModelScope.launch { startPage(journal, today().toEpochDay()) }
     }
 
     private suspend fun startPage(journal: Long, day: Long) {
         val id = repo.createPage(journal, day)
-        pageDay = day
-        _page.value = EditorState(id, "", "", NEW_PAGE)
+        if (_openId.value != journal) return
+        show(EditorState(id, "", "", NEW_PAGE), day)
     }
 
     fun dayOfOpenPage(): LocalDate? = pageDay?.let { LocalDate.ofEpochDay(it) }
@@ -158,6 +170,7 @@ class JournalViewModel(
         val p = _page.value ?: return
         saveJob?.cancel()
         _page.value = null
+        visited.remove(p.id)
         viewModelScope.launch {
             repo.savePage(p.id, p.title, p.body, p.content)
             repo.trashPage(p.id)
@@ -172,13 +185,20 @@ class JournalViewModel(
     }
 
     /** Saves the open page, or removes it if it was left blank. */
-    private fun leavePage() {
-        val p = _page.value ?: return
+    private fun leavePage() = show(null, null)
+
+    /** Shows [next] in one step, then saves (or drops, if blank) the page that was showing. */
+    private fun show(next: EditorState?, day: Long?) {
+        val old = _page.value
+        val oldDay = pageDay
         saveJob?.cancel()
-        _page.value = null
+        pageDay = day
+        _page.value = next
+        if (old == null || old.id == next?.id) return
+        visited[old.id] = old to oldDay
         viewModelScope.launch {
-            if (p.title.isBlank() && p.body.isBlank()) repo.deletePage(p.id)
-            else repo.savePage(p.id, p.title, p.body, p.content)
+            if (old.title.isBlank() && old.body.isBlank()) repo.deletePage(old.id)
+            else repo.savePage(old.id, old.title, old.body, old.content)
         }
     }
 
