@@ -42,6 +42,8 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CloseFullscreen
+import androidx.compose.material.icons.filled.OpenInFull
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Today
@@ -110,6 +112,8 @@ const val TAG_PAGE_TITLE = "pageTitle"
 const val TAG_TODAY_PAGE = "todayPage"
 const val TAG_COVER_TITLE = "coverTitle"
 const val TAG_COVER_SAVE = "coverSave"
+const val TAG_BOOK_VIEW = "bookView"
+const val TAG_BOOK_SPREAD = "bookSpread"
 
 /** Cover colours: indigo, rust, sage, ochre, plum, teal, oxblood, slate (same as the punch cards). */
 private fun coverColor(i: Int) = PUNCH_COLORS[i.mod(PUNCH_COLORS.size)]
@@ -442,9 +446,13 @@ private fun OpenBook(vm: JournalViewModel, book: Journal, wide: Boolean, onBack:
     val swing = remember(book.id) { Animatable(0f) }
     LaunchedEffect(book.id) { swing.animateTo(1f, tween(900, easing = FastOutSlowInEasing)) }
     var listOpen by rememberSaveable(book.id) { mutableStateOf(false) }
+    val bookView by vm.bookView.collectAsStateWithLifecycle()
 
     Box(Modifier.fillMaxSize().testTag(TAG_OPEN_BOOK)) {
-        if (wide) {
+        if (wide && bookView) {
+            BackHandler { vm.setBookView(false) }
+            BookSpread(vm, book, pages, page, onBack = onBack)
+        } else if (wide) {
             Row(Modifier.fillMaxSize()) {
                 PageList(
                     book, pages, page?.id,
@@ -456,7 +464,7 @@ private fun OpenBook(vm: JournalViewModel, book: Journal, wide: Boolean, onBack:
                 VerticalDivider()
                 Box(Modifier.weight(1f).fillMaxHeight()) {
                     val p = page
-                    if (p != null) PageEditor(vm, book, p, wide = true, nav = {}, extra = {})
+                    if (p != null) PageEditor(vm, book, p, wide = true, nav = {}, extra = { BookViewToggle(vm, on = false) })
                     else EmptyPage(vm::newPageToday)
                 }
             }
@@ -500,6 +508,69 @@ private fun OpenBook(vm: JournalViewModel, book: Journal, wide: Boolean, onBack:
     }
 }
 
+/** Switches the open book between the normal layout and the full-screen two-page spread. */
+@Composable
+private fun BookViewToggle(vm: JournalViewModel, on: Boolean) {
+    IconButton(onClick = { vm.setBookView(!on) }, modifier = Modifier.testTag(TAG_BOOK_VIEW)) {
+        Icon(if (on) Icons.Filled.CloseFullscreen else Icons.Filled.OpenInFull, if (on) "Leave book view" else "Book view")
+    }
+}
+
+/**
+ * The whole inner screen as an open book: the cloth cover frames two facing pages, the contents
+ * on the left and the page being written on the right, with a stitched spine down the middle.
+ */
+@Composable
+private fun BookSpread(vm: JournalViewModel, book: Journal, pages: List<JournalPage>, page: EditorState?, onBack: () -> Unit) {
+    val cloth = coverColor(book.color)
+    val spine = lerp(cloth, Color.Black, 0.3f)
+    val leftShape = RoundedCornerShape(topStart = 10.dp, bottomStart = 10.dp, topEnd = 2.dp, bottomEnd = 2.dp)
+    val rightShape = RoundedCornerShape(topStart = 2.dp, bottomStart = 2.dp, topEnd = 10.dp, bottomEnd = 10.dp)
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(cloth)
+            .drawBehind { drawHomePattern(COVER_PATTERNS[book.pattern.mod(COVER_PATTERNS.size)], Color.White.copy(alpha = 0.12f), 26.dp.toPx()) }
+            .statusBarsPadding()
+            .padding(start = 12.dp, end = 12.dp, top = 6.dp, bottom = 12.dp)
+            .testTag(TAG_BOOK_SPREAD),
+    ) {
+        Row(Modifier.fillMaxSize()) {
+            // Left page: the book's contents.
+            PageList(
+                book, pages, page?.id,
+                onOpen = vm::openPage,
+                onToday = vm::newPageToday,
+                onBack = onBack,
+                paper = true,
+                modifier = Modifier.weight(1f).fillMaxHeight().clip(leftShape),
+            )
+            // The spine: a darker band of cloth with a running stitch down it.
+            Box(
+                Modifier
+                    .width(16.dp)
+                    .fillMaxHeight()
+                    .background(spine)
+                    .drawBehind {
+                        drawLine(
+                            Color.White.copy(alpha = 0.45f),
+                            Offset(size.width / 2, 8.dp.toPx()), Offset(size.width / 2, size.height - 8.dp.toPx()),
+                            1.4.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(8.dp.toPx(), 6.dp.toPx())),
+                        )
+                    },
+            )
+            // Right page: the page being written.
+            Box(Modifier.weight(1f).fillMaxHeight().clip(rightShape).background(Color(0xFFFBF5E6))) {
+                if (page != null) {
+                    PageEditor(vm, book, page, wide = true, insetTop = false, nav = {}, extra = { BookViewToggle(vm, on = true) })
+                } else {
+                    EmptyPage(vm::newPageToday)
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun PageList(
     book: Journal,
@@ -509,10 +580,39 @@ private fun PageList(
     onToday: () -> Unit,
     onBack: () -> Unit,
     modifier: Modifier,
+    /** Drawn as a cream paper page (the left page of the book view). */
+    paper: Boolean = false,
+) {
+    val cloth = coverColor(book.color)
+    if (paper) {
+        // Paper page colours, whatever the app theme.
+        val ink = Color(0xFF1F1B16)
+        MaterialTheme(
+            colorScheme = MaterialTheme.colorScheme.copy(
+                surface = Color(0xFFFBF5E6), surfaceContainerLow = Color(0xFFF5EEDC), onSurface = ink,
+                onSurfaceVariant = ink.copy(alpha = 0.6f), outlineVariant = ink.copy(alpha = 0.2f),
+                secondaryContainer = cloth.copy(alpha = 0.16f), onSecondaryContainer = ink,
+            ),
+        ) { PageListContent(book, pages, selectedId, onOpen, onToday, onBack, modifier, cloth, insets = false) }
+    } else {
+        PageListContent(book, pages, selectedId, onOpen, onToday, onBack, modifier, cloth, insets = true)
+    }
+}
+
+@Composable
+private fun PageListContent(
+    book: Journal,
+    pages: List<JournalPage>,
+    selectedId: Long?,
+    onOpen: (Long) -> Unit,
+    onToday: () -> Unit,
+    onBack: () -> Unit,
+    modifier: Modifier,
+    cloth: Color,
+    insets: Boolean,
 ) {
     val cs = MaterialTheme.colorScheme
-    val cloth = coverColor(book.color)
-    Column(modifier.background(cs.surfaceContainerLow).safeDrawingPadding().testTag(TAG_PAGE_LIST)) {
+    Column(modifier.background(cs.surfaceContainerLow).then(if (insets) Modifier.safeDrawingPadding() else Modifier).testTag(TAG_PAGE_LIST)) {
         // The book's inside cover: its colour, title and the page count.
         Row(
             Modifier
@@ -613,6 +713,8 @@ private fun PageEditor(
     wide: Boolean,
     nav: @Composable () -> Unit,
     extra: @Composable () -> Unit,
+    /** Pad below the status bar (off when the book view frame already does). */
+    insetTop: Boolean = true,
 ) {
     var confirmDelete by remember { mutableStateOf(false) }
     if (confirmDelete) ConfirmDeleteDialog("this page", onConfirm = vm::trashOpenPage, onDismiss = { confirmDelete = false })
@@ -625,7 +727,7 @@ private fun PageEditor(
         }
     }
     // Wide: the toolbar is the top bar, so keep it below the status bar and camera.
-    Column(Modifier.fillMaxSize().then(if (wide) Modifier.statusBarsPadding() else Modifier)) {
+    Column(Modifier.fillMaxSize().then(if (wide && insetTop) Modifier.statusBarsPadding() else Modifier)) {
         if (!wide) {
             TopAppBar(
                 title = { Text(book.title.ifBlank { "Journal" }, maxLines = 1, overflow = TextOverflow.Ellipsis) },

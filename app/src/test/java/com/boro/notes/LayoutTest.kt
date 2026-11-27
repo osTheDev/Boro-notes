@@ -432,6 +432,12 @@ class InnerJournalLayoutTest {
         rule.onNodeWithTag(com.boro.notes.ui.TAG_PAGE_TITLE).performTextReplacement("Moss walk")
         rule.waitForIdle()
 
+        // Book view spreads the open book across the screen as two facing pages.
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_BOOK_VIEW).performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_BOOK_SPREAD).assertIsDisplayed()
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_PAGE_LIST).assertIsDisplayed()
+
         rule.onNodeWithTag("page-delete").performClick()
         rule.waitForIdle()
         rule.onNodeWithTag(com.boro.notes.ui.TAG_CONFIRM_DELETE).performClick()

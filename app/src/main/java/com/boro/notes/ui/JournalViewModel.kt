@@ -45,6 +45,12 @@ class JournalViewModel(
         .flatMapLatest { id -> if (id == null) flowOf(emptyList()) else repo.observePages(id) }
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
+    private val _bookView = MutableStateFlow(false)
+    /** Inner screen: the open book spread across the whole screen as two facing pages. */
+    val bookView: StateFlow<Boolean> = _bookView.asStateFlow()
+
+    fun setBookView(on: Boolean) { _bookView.value = on }
+
     private val _page = MutableStateFlow<EditorState?>(null)
     /** The page being written, with edits not yet saved. */
     val page: StateFlow<EditorState?> = _page.asStateFlow()
@@ -75,6 +81,7 @@ class JournalViewModel(
     }
 
     fun closeBook() {
+        _bookView.value = false
         leavePage()
         _openId.value = null
     }

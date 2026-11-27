@@ -110,6 +110,7 @@ fun BoroRoot(
         return
     }
     val bookOpen = journalVm.openId.collectAsStateWithLifecycle().value != null
+    val bookView by journalVm.bookView.collectAsStateWithLifecycle()
     val noteOpen = notesVm.editor.collectAsStateWithLifecycle().value != null
     val sketchOpen = designsVm.sketch.collectAsStateWithLifecycle().value != null
     val fullScreen by notesVm.fullScreen.collectAsStateWithLifecycle()
@@ -164,6 +165,8 @@ fun BoroRoot(
 
         if (wide) {
             Row(Modifier.fillMaxSize()) {
+              // The journal's book view takes the whole screen, side menu included.
+              if (!(section == Section.JOURNAL && bookOpen && bookView)) {
                 // A solid panel casting a shadow, so the side menu reads as its own surface
                 // and the textured screens sit beside it instead of just stopping.
                 NavigationRail(
@@ -182,6 +185,7 @@ fun BoroRoot(
                         )
                     }
                 }
+              }
                 content(Modifier.weight(1f).fillMaxSize())
             }
         } else {
