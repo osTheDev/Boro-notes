@@ -103,7 +103,22 @@ class JournalViewModel(
     /** What a page shows: its unsaved edits if any, else what's stored. */
     fun stateOf(p: JournalPage): EditorState =
         _page.value?.takeIf { it.id == p.id } ?: _drafts.value[p.id]
-            ?: EditorState(p.id, p.title, p.body, p.content ?: NEW_PAGE.takeIf { p.title.isBlank() && p.body.isBlank() })
+            ?: pageState(p)
+
+    /**
+     * A stored page, ready to write on. Journal pages are notebook paper: one still on the app's
+     * default paper (e.g. made before it got any) shows on the journal's ruled cream instead.
+     */
+    fun pageState(p: JournalPage): EditorState {
+        val content = p.content
+        val paper = when {
+            content == null -> if (p.title.isBlank() && p.body.isBlank()) NEW_PAGE else NoteDoc.load(null, p.body).copy(paper = JOURNAL_PAPER).encode()
+            // Default values aren't written out, so no "paper" means the default one.
+            "\"paper\"" !in content -> NoteDoc.load(content, p.body).copy(paper = JOURNAL_PAPER).encode()
+            else -> content
+        }
+        return EditorState(p.id, p.title, p.body, paper)
+    }
 
     /** Turns to the spread holding book page [index] (0 = first). Blank pages left at the end are dropped. */
     fun turnTo(index: Int, count: Int = pages.value.size) {
@@ -315,12 +330,12 @@ class JournalViewModel(
             return
         }
         pages.value.firstOrNull { it.id == id }?.let { p ->
-            show(EditorState(p.id, p.title, p.body, p.content), p.day)
+            show(pageState(p), p.day)
             return
         }
         viewModelScope.launch {
             val p = repo.getPage(id) ?: return@launch
-            show(EditorState(p.id, p.title, p.body, p.content), p.day)
+            show(pageState(p), p.day)
         }
     }
 
@@ -405,7 +420,8 @@ class JournalViewModel(
 
     companion object {
         /** New pages start on cream ruled paper with a margin, like a notebook. */
-        private val NEW_PAGE = NoteDoc(listOf(TextBlock(NoteDoc.newId())), Paper(PaperColor.CREAM, PaperPattern.RULED, margin = true)).encode()
+        private val JOURNAL_PAPER = Paper(PaperColor.CREAM, PaperPattern.RULED, margin = true)
+        private val NEW_PAGE = NoteDoc(listOf(TextBlock(NoteDoc.newId())), JOURNAL_PAPER).encode()
 
         fun factory(repo: JournalRepository): ViewModelProvider.Factory = viewModelFactory {
             initializer { JournalViewModel(repo) }

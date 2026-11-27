@@ -142,6 +142,8 @@ internal fun FormattingBar(
     /** App bar items around the tools when [atTop] (back button; full screen, delete). */
     start: @Composable () -> Unit = {},
     end: @Composable () -> Unit = {},
+    /** Laid out as a block, wrapping onto more rows instead of scrolling sideways (the journal's book view). */
+    block: Boolean = false,
 ) {
     val focusManager = LocalFocusManager.current
     var open by rememberSaveable { mutableStateOf(true) }
@@ -203,11 +205,7 @@ internal fun FormattingBar(
                     horizontalArrangement = if (atTop) Arrangement.Start else Arrangement.End,
                 ) { showPill() }
             } else {
-            Row(
-                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp, vertical = 6.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
+            val tools: @Composable () -> Unit = {
                 // Text: paragraph style, B I U S, colour, highlight.
                 ToolGroup(cs.primaryContainer, cs.onPrimaryContainer) {
                     ToolMenu(Icons.Filled.TextFields, "Text style", "format-style") { close ->
@@ -304,7 +302,21 @@ internal fun FormattingBar(
                         PageMenu(editor.doc.paper) { editor.update(editor.doc.copy(paper = it)); close() }
                     }
                 }
-                ToolButton(Icons.Filled.KeyboardArrowDown, "Hide formatting", "format-hide") { open = false }
+                if (!block) ToolButton(Icons.Filled.KeyboardArrowDown, "Hide formatting", "format-hide") { open = false }
+            }
+            if (block) {
+                @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+                androidx.compose.foundation.layout.FlowRow(
+                    Modifier.fillMaxWidth().padding(12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) { tools() }
+            } else {
+                Row(
+                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) { tools() }
             }
             }
           }

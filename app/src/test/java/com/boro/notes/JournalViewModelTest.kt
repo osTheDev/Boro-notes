@@ -196,4 +196,15 @@ class JournalViewModelTest {
         advanceUntilIdle()
         assertNull(vm.bookOrder()[1].chapter)
     }
+
+    @Test fun pagesOnDefaultPaperShowAsNotebookPaper() {
+        val plain = com.boro.notes.notes.NoteDoc.fromPlain("hello").encode()
+        assertTrue("\"paper\"" !in plain)
+        listOf(null, plain).forEach { content ->
+            val page = com.boro.notes.data.JournalPage(id = 7, journalId = 1, day = 1, body = "hello", content = content)
+            val doc = com.boro.notes.notes.NoteDoc.load(vm.pageState(page).content, "hello")
+            assertEquals(com.boro.notes.notes.PaperPattern.RULED, doc.paper.pattern)
+            assertEquals("hello", doc.plainText().trim())
+        }
+    }
 }

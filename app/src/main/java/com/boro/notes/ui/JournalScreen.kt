@@ -483,7 +483,7 @@ private fun OpenBook(vm: JournalViewModel, book: Journal, wide: Boolean, onBack:
     LaunchedEffect(book.id, wide && bookView) { if (!(wide && bookView)) vm.openFirstPage() }
     // The cover swings open the first time the book is shown open.
     val swing = remember(book.id) { Animatable(0f) }
-    LaunchedEffect(book.id) { swing.animateTo(1f, tween(900, easing = FastOutSlowInEasing)) }
+    LaunchedEffect(book.id) { swing.animateTo(1f, tween(if (wide && bookView) 1100 else 900, easing = FastOutSlowInEasing)) }
     var listOpen by rememberSaveable(book.id) { mutableStateOf(false) }
 
     Box(Modifier.fillMaxSize().testTag(TAG_OPEN_BOOK)) {
@@ -528,7 +528,42 @@ private fun OpenBook(vm: JournalViewModel, book: Journal, wide: Boolean, onBack:
                 },
             )
         }
-        if (swing.value < 1f) {
+        if (swing.value < 1f && wide && bookView) {
+            // Book view: the front cover lies over the right-hand page, hinged on the spine, and
+            // swings over to the left like opening a real book, showing the spread underneath.
+            val angle = 180f * swing.value
+            val cloth = coverColor(book.color)
+            Row(Modifier.fillMaxSize()) {
+                Spacer(Modifier.weight(1f))
+                Box(
+                    Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .graphicsLayer {
+                            transformOrigin = TransformOrigin(0f, 0.5f)
+                            rotationY = -angle
+                            cameraDistance = 24f * density
+                            alpha = if (angle > 140f) (180f - angle) / 40f else 1f
+                        }
+                        .background(if (angle <= 90f) cloth else lerp(cloth, Color.Black, 0.25f))
+                        .drawBehind {
+                            if (angle <= 90f) drawHomePattern(COVER_PATTERNS[book.pattern.mod(COVER_PATTERNS.size)], Color.White.copy(alpha = 0.16f), 26.dp.toPx())
+                        },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (angle <= 90f) {
+                        Text(
+                            book.title.ifBlank { "Journal" },
+                            style = MaterialTheme.typography.headlineMedium,
+                            fontFamily = FontFamily.Serif,
+                            color = Color.White,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.padding(32.dp),
+                        )
+                    }
+                }
+            }
+        } else if (swing.value < 1f) {
             // The front cover, hinged on the left, turning away to show the pages.
             BookCover(
                 book.title, book.color, book.pattern,
@@ -588,9 +623,9 @@ private fun BookSpread(vm: JournalViewModel, book: Journal, pages: List<JournalP
     LaunchedEffect(start, pages.size, reading) { vm.ensureSpread() }
     val left = order.getOrNull(start)
     val right = order.getOrNull(start + 1)
-    fun stateOf(p: JournalPage) = open?.takeIf { it.id == p.id } ?: drafts[p.id] ?: EditorState(p.id, p.title, p.body, p.content)
+    fun stateOf(p: JournalPage) = open?.takeIf { it.id == p.id } ?: drafts[p.id] ?: vm.pageState(p)
     // Words in the whole book, so turning pages doesn't change it.
-    val words = order.sumOf { p -> stateOf(p).body.split(Regex("\\s+")).count { it.isNotBlank() } }
+    val words = order.sumOf { p -> ((open?.takeIf { it.id == p.id } ?: drafts[p.id])?.body ?: p.body).split(Regex("\\s+")).count { it.isNotBlank() } }
 
     // No turning animation: the pages' text and numbers simply change. Nowhere to turn: nothing happens.
     fun forward() { if (vm.turnForward()) showContents = false }
