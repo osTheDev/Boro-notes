@@ -224,8 +224,7 @@ class DesignsViewModelTest {
         vm.addStroke(listOf(Pt(0f, 0f), Pt(3f, 0f)))
         vm.close()
         advanceUntilIdle()
-        assertEquals(1, designs.designs.value.count { it.deletedAt == null })
-        assertEquals(1, designs.designs.value.count { it.deletedAt != null })
+        assertEquals(1, designs.designs.value.size)
     }
 
     @Test
@@ -268,7 +267,9 @@ class DesignsViewModelTest {
         vm.deleteOpenDesign()
         advanceUntilIdle()
         assertNull(vm.sketch.value)
-        assertEquals(1, designs.designs.value.size)
+        // The deleted design waits in the Trash.
+        assertEquals(1, designs.designs.value.count { it.deletedAt == null })
+        assertEquals(1, designs.designs.value.count { it.deletedAt != null })
         assertFalse(vm.all.value.isEmpty())
     }
 }
