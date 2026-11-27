@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
@@ -555,6 +556,7 @@ private fun PageList(
                         Text(
                             p.title.ifBlank { LocalDate.ofEpochDay(p.day).format(DateTimeFormatter.ofPattern("EEEE")) },
                             style = MaterialTheme.typography.titleSmall,
+                            color = cs.onSurface,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
@@ -587,7 +589,7 @@ private fun DateStamp(date: LocalDate, color: Color) {
             textAlign = TextAlign.Center,
             modifier = Modifier.fillMaxWidth().background(color).padding(vertical = 1.dp),
         )
-        Text(date.dayOfMonth.toString(), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+        Text(date.dayOfMonth.toString(), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
     }
 }
 
@@ -622,7 +624,8 @@ private fun PageEditor(
             }
         }
     }
-    Column(Modifier.fillMaxSize()) {
+    // Wide: the toolbar is the top bar, so keep it below the status bar and camera.
+    Column(Modifier.fillMaxSize().then(if (wide) Modifier.statusBarsPadding() else Modifier)) {
         if (!wide) {
             TopAppBar(
                 title = { Text(book.title.ifBlank { "Journal" }, maxLines = 1, overflow = TextOverflow.Ellipsis) },
