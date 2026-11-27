@@ -473,7 +473,7 @@ private fun OpenBook(vm: JournalViewModel, book: Journal, wide: Boolean, onBack:
 
     Box(Modifier.fillMaxSize().testTag(TAG_OPEN_BOOK)) {
         if (wide && bookView) {
-            BackHandler { vm.setBookView(false) }
+            // Book view is the default when unfolded, so back closes the book.
             BookSpread(vm, book, pages, page, onBack = onBack)
         } else if (wide) {
             Row(Modifier.fillMaxSize()) {
@@ -569,63 +569,24 @@ private fun BookSpread(vm: JournalViewModel, book: Journal, pages: List<JournalP
     val todayDay = vm.todayDate().toEpochDay()
     val canStartToday = ordered.lastOrNull()?.day != todayDay
 
-    // Flip: the right page turns away on the spine, the page swaps while it's edge-on (unseen),
-    // and the new one turns back in. The lean while dragging is plain state read only when
-    // drawing, so following the finger redraws the page without rebuilding it.
-    var flipDir by remember { mutableIntStateOf(0) }
-    val turn = remember { Animatable(0f) }
-    var drag by remember { mutableFloatStateOf(0f) }
-    LaunchedEffect(page?.id) {
-        val dir = flipDir
-        if (dir != 0 && page != null) {
-            flipDir = 0
-            turn.snapTo(dir * 90f)
-            turn.animateTo(0f, tween(300, easing = LinearOutSlowInEasing))
-        }
-    }
     val scope = rememberCoroutineScope()
-    // Hands the drag lean over to the animation, in one step so no frame shows the page jump.
-    fun settle() {
-        val lean = drag
-        drag = 0f
-        scope.launch { turn.snapTo(turn.value + lean); turn.animateTo(0f, spring(dampingRatio = Spring.DampingRatioMediumBouncy)) }
-    }
-    // A short wiggle of the page when there's nowhere to flip to.
-    fun nudge(dir: Int) {
-        scope.launch {
-            turn.animateTo(dir * 12f, tween(120))
-            turn.animateTo(0f, spring(dampingRatio = Spring.DampingRatioMediumBouncy))
-        }
-    }
     // A short message in the strip by the camera, e.g. why a page won't turn.
     var hint by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(hint) { if (hint != null) { delay(2200); hint = null } }
-    // Turns the page away, then swaps to the next one (see the LaunchedEffect above).
-    fun turnPage(dir: Int, swap: () -> Unit) {
-        showContents = false
-        scope.launch {
-            turn.snapTo(turn.value + drag)
-            drag = 0f
-            turn.animateTo(dir * 90f, tween(130, easing = FastOutLinearInEasing))
-            flipDir = dir
-            swap()
-            // If nothing swapped in after all, bring the page back rather than leave it edge-on.
-            delay(800)
-            if (flipDir != 0) { flipDir = 0; turn.animateTo(0f, tween(250)) }
-        }
-    }
+    // No turning animation: the page's text and number simply change.
+    fun turnPage(swap: () -> Unit) { showContents = false; swap() }
     fun forward() {
         when {
-            newer != null -> turnPage(1) { vm.openPage(newer.id) }
-            canStartToday -> turnPage(1) { vm.newPageToday() }
+            newer != null -> turnPage { vm.openPage(newer.id) }
+            canStartToday -> turnPage { vm.newPageToday() }
             // Past the last page: a fresh blank page, like turning to an empty one. Left blank, it's dropped.
-            page != null && (page.body.isNotBlank() || page.title.isNotBlank()) -> turnPage(1) { vm.newPage() }
-            else -> { settle(); nudge(1); hint = "Write on this page to turn to a new one" }
+            page != null && (page.body.isNotBlank() || page.title.isNotBlank()) -> turnPage { vm.newPage() }
+            else -> { hint = "Write on this page to turn to a new one" }
         }
     }
     fun back() {
-        if (older != null) turnPage(-1) { vm.openPage(older.id) }
-        else { settle(); nudge(-1); hint = "This is the first page" }
+        if (older != null) turnPage { vm.openPage(older.id) }
+        else { hint = "This is the first page" }
     }
     // The gesture below lives across recompositions; always call the latest versions.
     val onForward by rememberUpdatedState(::forward)
@@ -670,7 +631,6 @@ private fun BookSpread(vm: JournalViewModel, book: Journal, pages: List<JournalP
                         var dx = 0f
                         var dy = 0f
                         var flipping = false
-                        val pageWidth = (size.width / 2f).coerceAtLeast(1f)
                         while (true) {
                             val event = awaitPointerEvent(PointerEventPass.Initial)
                             val change = event.changes.firstOrNull { it.id == down.id } ?: break
@@ -680,18 +640,13 @@ private fun BookSpread(vm: JournalViewModel, book: Journal, pages: List<JournalP
                             dx += delta.x
                             dy += delta.y
                             if (!flipping && abs(dx) > viewConfiguration.touchSlop && abs(dx) > abs(dy)) flipping = true
-                            if (flipping) {
-                                change.consume()
-                                // The page leans with the finger while dragging.
-                                drag = (-dx / pageWidth * 70f).coerceIn(-70f, 70f)
-                            }
+                            if (flipping) change.consume()
                         }
                         if (flipping) {
                             val vx = velocity.calculateVelocity().x
                             when {
                                 dx < -swipeDistance || vx < -flickSpeed -> onForward()
                                 dx > swipeDistance || vx > flickSpeed -> onBack2()
-                                else -> settle()
                             }
                         }
                     }
@@ -704,9 +659,9 @@ private fun BookSpread(vm: JournalViewModel, book: Journal, pages: List<JournalP
                         book, pages, page?.id,
                         onOpen = { id ->
                             if (id == page?.id) showContents = false
-                            else turnPage(if ((ordered.indexOfFirst { it.id == id }) < pos) -1 else 1) { vm.openPage(id) }
+                            else turnPage { vm.openPage(id) }
                         },
-                        onToday = { turnPage(1) { vm.newPageToday() } },
+                        onToday = { turnPage { vm.newPageToday() } },
                         onBack = onBack,
                         paper = true,
                         modifier = Modifier.fillMaxSize(),
@@ -761,11 +716,6 @@ private fun BookSpread(vm: JournalViewModel, book: Journal, pages: List<JournalP
                 Modifier
                     .weight(1f)
                     .fillMaxHeight()
-                    .graphicsLayer {
-                        transformOrigin = TransformOrigin(0f, 0.5f)
-                        rotationY = -(turn.value + drag).coerceIn(-90f, 90f)
-                        cameraDistance = 20f * density
-                    }
                     .clip(rightShape)
                     .background(paperColor)
                     .testTag(TAG_RIGHT_PAGE),

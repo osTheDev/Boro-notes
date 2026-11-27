@@ -45,8 +45,11 @@ class JournalViewModel(
         .flatMapLatest { id -> if (id == null) flowOf(emptyList()) else repo.observePages(id) }
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
-    private val _bookView = MutableStateFlow(false)
-    /** Inner screen: the open book spread across the whole screen as two facing pages. */
+    private val _bookView = MutableStateFlow(true)
+    /**
+     * Inner screen: the open book spread across the whole screen as two facing pages. On by
+     * default, so an unfolded book opens straight into it; the last choice is kept between books.
+     */
     val bookView: StateFlow<Boolean> = _bookView.asStateFlow()
 
     fun setBookView(on: Boolean) {
@@ -97,7 +100,7 @@ class JournalViewModel(
     }
 
     fun closeBook() {
-        _bookView.value = false
+        _reading.value = false
         leavePage()
         visited.clear()
         _openId.value = null

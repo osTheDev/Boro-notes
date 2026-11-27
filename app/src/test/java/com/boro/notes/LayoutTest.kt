@@ -428,16 +428,22 @@ class InnerJournalLayoutTest {
 
         rule.onNodeWithTag("book-1").performClick()
         rule.waitForIdle()
+        // Unfolded, a book opens straight into book view: two facing pages across the screen.
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_BOOK_SPREAD).assertIsDisplayed()
+        assertTrue(vm.bookView.value)
+
+        // Leaving book view shows the pages beside the open page.
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_BOOK_VIEW).performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_BOOK_SPREAD).assertDoesNotExist()
         rule.onNodeWithTag(com.boro.notes.ui.TAG_PAGE_LIST).assertIsDisplayed()
         rule.onNodeWithTag(com.boro.notes.ui.TAG_PAGE_TITLE).performTextReplacement("Moss walk")
         rule.waitForIdle()
 
-        // Book view spreads the open book across the screen as two facing pages.
         rule.onNodeWithTag(com.boro.notes.ui.TAG_BOOK_VIEW).performClick()
         rule.waitForIdle()
         rule.onNodeWithTag(com.boro.notes.ui.TAG_BOOK_SPREAD).assertIsDisplayed()
         rule.onNodeWithTag(com.boro.notes.ui.TAG_PAGE_LIST).assertIsDisplayed()
-        assertTrue(vm.bookView.value)
 
         // Read only hides the delete control; tapping again goes back to editing.
         rule.onNodeWithTag(com.boro.notes.ui.TAG_READ_MODE).performClick()
