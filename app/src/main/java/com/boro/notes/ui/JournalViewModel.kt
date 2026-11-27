@@ -25,6 +25,7 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.time.LocalDate
@@ -125,6 +126,17 @@ class JournalViewModel(
         val target = (index.coerceIn(0, lastSpread(count)) / 2) * 2
         if (target == spreadStart(count)) return
         dropTrailingBlanks(keepFrom = target)
+        val journal = _openId.value
+        if (journal != null && target + 2 > count && _bookView.value && !_reading.value) {
+            // Turning onto fresh pages: make them first and turn once they're loaded, so the new
+            // spread appears whole (date, title, paper) instead of filling in in front of you.
+            viewModelScope.launch {
+                fillSpread(journal, target)
+                withTimeoutOrNull(1_000) { pages.first { it.size >= target + 2 } }
+                if (_openId.value == journal) _spread.value = target
+            }
+            return
+        }
         _spread.value = target
         ensureSpread()
     }
@@ -175,13 +187,14 @@ class JournalViewModel(
     fun ensureSpread() {
         val journal = _openId.value ?: return
         if (!_bookView.value || _reading.value) return
-        viewModelScope.launch {
-            pageOps.withLock {
-                if (_openId.value != journal) return@withLock
-                val n = repo.observePages(journal).first().size
-                repeat((spreadStart(n) + 2 - n).coerceAtLeast(0)) { newBookPage(journal) }
-            }
-        }
+        viewModelScope.launch { fillSpread(journal, null) }
+    }
+
+    /** Makes the missing pages of the spread starting at [start] (or the one showing). */
+    private suspend fun fillSpread(journal: Long, start: Int?) = pageOps.withLock {
+        if (_openId.value != journal) return@withLock
+        val n = repo.observePages(journal).first().size
+        repeat(((start ?: spreadStart(n)) + 2 - n).coerceAtLeast(0)) { newBookPage(journal) }
     }
 
     fun spreadTitle(p: JournalPage, title: String) = editSpreadPage(p) { it.copy(title = title) }
