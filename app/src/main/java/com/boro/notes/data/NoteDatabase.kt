@@ -7,7 +7,7 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [Note::class, Design::class, Habit::class, HabitCheck::class, Todo::class, Journal::class, JournalPage::class], version = 5, exportSchema = true)
+@Database(entities = [Note::class, Design::class, Habit::class, HabitCheck::class, Todo::class, Journal::class, JournalPage::class], version = 6, exportSchema = true)
 abstract class NoteDatabase : RoomDatabase() {
     abstract fun noteDao(): NoteDao
     abstract fun designDao(): DesignDao
@@ -76,9 +76,15 @@ abstract class NoteDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `journal_pages` ADD COLUMN `chapter` TEXT")
+            }
+        }
+
         fun create(context: Context, name: String = "boro-notes.db"): NoteDatabase =
             Room.databaseBuilder(context, NoteDatabase::class.java, name)
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
                 .build()
     }
 }

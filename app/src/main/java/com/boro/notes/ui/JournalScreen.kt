@@ -57,6 +57,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import kotlinx.coroutines.delay
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.BookmarkAdd
 import androidx.compose.material.icons.filled.AutoStories
 import androidx.compose.material.icons.filled.TextFormat
 import androidx.compose.material.icons.filled.Check
@@ -74,6 +75,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -132,6 +134,10 @@ const val TAG_TODAY_PAGE = "todayPage"
 const val TAG_COVER_TITLE = "coverTitle"
 const val TAG_COVER_SAVE = "coverSave"
 const val TAG_BOOK_VIEW = "bookView"
+const val TAG_CONTENTS = "spreadContents"
+const val TAG_NEW_CHAPTER = "newChapter"
+const val TAG_CHAPTER_NAME = "chapterName"
+const val TAG_CHAPTER_SAVE = "chapterSave"
 const val TAG_BOOK_SPREAD = "bookSpread"
 const val TAG_BOOK_INFO = "bookInfo"
 const val TAG_READ_MODE = "readMode"
@@ -464,17 +470,18 @@ private fun ClosedBook(book: Journal, vm: JournalViewModel, onOpenHere: () -> Un
 private fun OpenBook(vm: JournalViewModel, book: Journal, wide: Boolean, onBack: () -> Unit) {
     val pages by vm.pages.collectAsStateWithLifecycle()
     val page by vm.page.collectAsStateWithLifecycle()
-    LaunchedEffect(book.id) { vm.openFirstPage() }
+    val bookView by vm.bookView.collectAsStateWithLifecycle()
+    // Book view writes both facing pages in place, so there's no single page to open first.
+    LaunchedEffect(book.id, wide && bookView) { if (!(wide && bookView)) vm.openFirstPage() }
     // The cover swings open the first time the book is shown open.
     val swing = remember(book.id) { Animatable(0f) }
     LaunchedEffect(book.id) { swing.animateTo(1f, tween(900, easing = FastOutSlowInEasing)) }
     var listOpen by rememberSaveable(book.id) { mutableStateOf(false) }
-    val bookView by vm.bookView.collectAsStateWithLifecycle()
 
     Box(Modifier.fillMaxSize().testTag(TAG_OPEN_BOOK)) {
         if (wide && bookView) {
             // Book view is the default when unfolded, so back closes the book.
-            BookSpread(vm, book, pages, page, onBack = onBack)
+            BookSpread(vm, book, pages, onBack = onBack)
         } else if (wide) {
             Row(Modifier.fillMaxSize()) {
                 PageList(
@@ -541,52 +548,47 @@ private fun BookViewToggle(vm: JournalViewModel, on: Boolean) {
 
 /**
  * The whole inner screen as an open book: the cloth cover frames two facing pages with a stitched
- * spine between. The right page is the one being written; the left page is the one before it (or
- * the contents). Swipe across the pages to flip through the book.
+ * spine between. Both pages are written in place, like a real book; swipe across them to turn to
+ * the next two. The contents (titles grouped by chapter) open over the left page.
  */
 @Composable
-private fun BookSpread(vm: JournalViewModel, book: Journal, pages: List<JournalPage>, page: EditorState?, onBack: () -> Unit) {
+private fun BookSpread(vm: JournalViewModel, book: Journal, pages: List<JournalPage>, onBack: () -> Unit) {
     val cloth = coverColor(book.color)
     val spine = lerp(cloth, Color.Black, 0.3f)
     val paperColor = Color(0xFFFBF5E6)
     val ink = Color(0xFF3A322C)
     // Even corners: uneven rounded clips hit-test through Path ops, which tests can't run.
-    val leftShape = RoundedCornerShape(8.dp)
-    val rightShape = RoundedCornerShape(8.dp)
+    val pageShape = RoundedCornerShape(8.dp)
     val formatPinned by vm.formatPinned.collectAsStateWithLifecycle()
     val reading by vm.reading.collectAsStateWithLifecycle()
+    val spreadAt by vm.spread.collectAsStateWithLifecycle()
+    val drafts by vm.drafts.collectAsStateWithLifecycle()
+    val open by vm.page.collectAsStateWithLifecycle()
     var showContents by rememberSaveable { mutableStateOf(false) }
-    var confirmDelete by remember { mutableStateOf(false) }
-    if (confirmDelete) ConfirmDeleteDialog("this page", onConfirm = vm::trashOpenPage, onDismiss = { confirmDelete = false })
-    val words = page?.body?.split(Regex("\\s+"))?.count { it.isNotBlank() } ?: 0
-    val index = pages.indexOfFirst { it.id == page?.id }
+    var confirmDelete by remember { mutableStateOf<JournalPage?>(null) }
+    var chapterEdit by remember { mutableStateOf<ChapterEdit?>(null) }
+    BackHandler(enabled = showContents) { showContents = false }
 
-    // Pages oldest first, like a book; the open page sits on the right, the one before on the left.
-    val ordered = pages.reversed()
-    val pos = ordered.indexOfFirst { it.id == page?.id }
-    val older = if (pos > 0) ordered[pos - 1] else null
-    val newer = if (pos >= 0 && pos < ordered.lastIndex) ordered[pos + 1] else null
-    val todayDay = vm.todayDate().toEpochDay()
-    val canStartToday = ordered.lastOrNull()?.day != todayDay
+    val order = vm.bookOrder(pages)
+    val last = vm.lastSpread(pages.size)
+    val start = if (spreadAt < 0 || spreadAt > last) last else spreadAt
+    val left = order.getOrNull(start)
+    val right = order.getOrNull(start + 1)
+    fun stateOf(p: JournalPage) = open?.takeIf { it.id == p.id } ?: drafts[p.id] ?: EditorState(p.id, p.title, p.body, p.content)
+    val words = listOfNotNull(left, right).sumOf { p -> stateOf(p).body.split(Regex("\\s+")).count { it.isNotBlank() } }
+    val chapter = order.take(start + 1).lastOrNull { it.chapter != null }?.chapter
 
-    val scope = rememberCoroutineScope()
     // A short message in the strip by the camera, e.g. why a page won't turn.
     var hint by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(hint) { if (hint != null) { delay(2200); hint = null } }
-    // No turning animation: the page's text and number simply change.
-    fun turnPage(swap: () -> Unit) { showContents = false; swap() }
+    // No turning animation: the pages' text and numbers simply change.
     fun forward() {
-        when {
-            newer != null -> turnPage { vm.openPage(newer.id) }
-            canStartToday -> turnPage { vm.newPageToday() }
-            // Past the last page: a fresh blank page, like turning to an empty one. Left blank, it's dropped.
-            page != null && (page.body.isNotBlank() || page.title.isNotBlank()) -> turnPage { vm.newPage() }
-            else -> { hint = "Write on this page to turn to a new one" }
-        }
+        if (start + 2 <= last) { showContents = false; vm.turnTo(start + 2) }
+        else hint = "This is the end of the book. Tap New page to keep writing"
     }
     fun back() {
-        if (older != null) turnPage { vm.openPage(older.id) }
-        else { hint = "This is the first page" }
+        if (start > 0) { showContents = false; vm.turnTo(start - 2) }
+        else hint = "This is the first page"
     }
     // The gesture below lives across recompositions; always call the latest versions.
     val onForward by rememberUpdatedState(::forward)
@@ -596,6 +598,20 @@ private fun BookSpread(vm: JournalViewModel, book: Journal, pages: List<JournalP
     val swipeDistance = with(localDensity) { 48.dp.toPx() }
     val flickSpeed = with(localDensity) { 600.dp.toPx() }
 
+    confirmDelete?.let { p ->
+        ConfirmDeleteDialog("this page", onConfirm = { vm.trashSpreadPage(p.id) }, onDismiss = { confirmDelete = null })
+    }
+    chapterEdit?.let { edit ->
+        ChapterDialog(
+            edit,
+            onSave = { name ->
+                if (edit.page == null) { showContents = false; vm.addPage(chapter = name) } else vm.setChapter(edit.page.id, name)
+            },
+            onRemove = { edit.page?.let { vm.setChapter(it.id, null) } },
+            onDismiss = { chapterEdit = null },
+        )
+    }
+
     Column(
         Modifier
             .fillMaxSize()
@@ -603,13 +619,19 @@ private fun BookSpread(vm: JournalViewModel, book: Journal, pages: List<JournalP
             .drawBehind { drawHomePattern(COVER_PATTERNS[book.pattern.mod(COVER_PATTERNS.size)], Color.White.copy(alpha = 0.12f), 26.dp.toPx()) }
             .testTag(TAG_BOOK_SPREAD),
     ) {
-        // The strip by the camera, otherwise dead space: what day, how much, where in the book.
+        // The strip by the camera, otherwise dead space: which book, where in it, how much.
         Box(Modifier.fillMaxWidth().windowInsetsTopHeight(WindowInsets.statusBars), contentAlignment = Alignment.Center) {
+            val n = pages.size
             Text(
                 hint ?: listOfNotNull(
-                    vm.dayOfOpenPage()?.format(DateTimeFormatter.ofPattern("EEE, MMM d")),
-                    if (page != null) (if (words == 1) "1 word" else "$words words") else null,
-                    if (index >= 0) "page ${pages.size - index} of ${pages.size}" else null,
+                    book.title.ifBlank { "Journal" },
+                    chapter,
+                    when {
+                        right != null -> "pages ${start + 1}–${start + 2} of $n"
+                        left != null -> "page ${start + 1} of $n"
+                        else -> null
+                    },
+                    if (left != null) (if (words == 1) "1 word" else "$words words") else null,
                 ).joinToString("  ·  "),
                 style = MaterialTheme.typography.labelMedium,
                 color = Color.White.copy(alpha = 0.85f),
@@ -620,9 +642,9 @@ private fun BookSpread(vm: JournalViewModel, book: Journal, pages: List<JournalP
             Modifier
                 .fillMaxSize()
                 .padding(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 12.dp)
-                // A sideways swipe anywhere on the pages flips them; up and down still scrolls a page.
+                // A sideways swipe anywhere on the pages turns them; up and down still scrolls a page.
                 // Watched on the way down (Initial pass), before the text on the page can claim the
-                // drag for selecting; a clearly sideways drag is then taken for the flip.
+                // drag for selecting; a clearly sideways drag is then taken for the turn.
                 .pointerInput(Unit) {
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
@@ -630,7 +652,7 @@ private fun BookSpread(vm: JournalViewModel, book: Journal, pages: List<JournalP
                         velocity.addPosition(down.uptimeMillis, down.position)
                         var dx = 0f
                         var dy = 0f
-                        var flipping = false
+                        var turning = false
                         while (true) {
                             val event = awaitPointerEvent(PointerEventPass.Initial)
                             val change = event.changes.firstOrNull { it.id == down.id } ?: break
@@ -639,10 +661,10 @@ private fun BookSpread(vm: JournalViewModel, book: Journal, pages: List<JournalP
                             val delta = change.position - change.previousPosition
                             dx += delta.x
                             dy += delta.y
-                            if (!flipping && abs(dx) > viewConfiguration.touchSlop && abs(dx) > abs(dy)) flipping = true
-                            if (flipping) change.consume()
+                            if (!turning && abs(dx) > viewConfiguration.touchSlop && abs(dx) > abs(dy)) turning = true
+                            if (turning) change.consume()
                         }
-                        if (flipping) {
+                        if (turning) {
                             val vx = velocity.calculateVelocity().x
                             when {
                                 dx < -swipeDistance || vx < -flickSpeed -> onForward()
@@ -652,49 +674,30 @@ private fun BookSpread(vm: JournalViewModel, book: Journal, pages: List<JournalP
                     }
                 },
         ) {
-            // Left page: the page before (read only), or the contents.
-            Box(Modifier.weight(1f).fillMaxHeight().clip(leftShape).background(paperColor).testTag(TAG_LEFT_PAGE)) {
-                if (showContents || older == null) {
-                    PageList(
-                        book, pages, page?.id,
-                        onOpen = { id ->
-                            if (id == page?.id) showContents = false
-                            else turnPage { vm.openPage(id) }
-                        },
-                        onToday = { turnPage { vm.newPageToday() } },
-                        onBack = onBack,
-                        paper = true,
-                        modifier = Modifier.fillMaxSize(),
+            // Left page.
+            Box(Modifier.weight(1f).fillMaxHeight().clip(pageShape).background(paperColor).testTag(TAG_LEFT_PAGE)) {
+                if (showContents) {
+                    SpreadContents(
+                        order, ::stateOf, setOfNotNull(left?.id, right?.id), ink, cloth,
+                        onOpen = { index -> showContents = false; vm.turnTo(index) },
+                        onClose = { showContents = false },
+                        onNewChapter = { chapterEdit = ChapterEdit(null, "") },
+                        onChapter = { p -> chapterEdit = ChapterEdit(p, p.chapter.orEmpty()) },
                     )
                 } else {
-                    Column(Modifier.fillMaxSize()) {
-                        PageHeader(ink) {
+                    SpreadPage(
+                        vm, left, if (left != null) stateOf(left) else null, "left", ink, formatPinned, reading,
+                        onNewPage = vm::addPage,
+                        onDelete = { confirmDelete = it },
+                        leading = {
                             IconButton(onClick = onBack, modifier = Modifier.testTag("journal-back-spread")) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Close the book", tint = ink) }
-                            Text(
-                                book.title.ifBlank { "Journal" },
-                                style = MaterialTheme.typography.titleMedium,
-                                fontFamily = FontFamily.Serif,
-                                color = ink,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f),
-                            )
+                        },
+                        trailing = {
                             IconButton(onClick = { showContents = true }, modifier = Modifier.testTag("spread-contents")) {
                                 Icon(Icons.AutoMirrored.Filled.List, "Contents", tint = ink)
                             }
-                        }
-                        val prev = remember(older) { EditorState(older.id, older.title, older.body, older.content) }
-                        NoteEditor(
-                            note = prev,
-                            onChange = { _, _ -> },
-                            wide = true,
-                            modifier = Modifier.weight(1f).fillMaxWidth(),
-                            toolbarAtTop = true,
-                            showToolbar = false,
-                            readOnly = true,
-                            header = { PageHeading(LocalDate.ofEpochDay(older.day), older.title) },
-                        )
-                    }
+                        },
+                    )
                 }
             }
             // The spine: a darker band of cloth with a running stitch down it.
@@ -711,33 +714,203 @@ private fun BookSpread(vm: JournalViewModel, book: Journal, pages: List<JournalP
                         )
                     },
             )
-            // Right page: the page being written, turning on the spine when flipped.
-            Box(
-                Modifier
-                    .weight(1f)
-                    .fillMaxHeight()
-                    .clip(rightShape)
-                    .background(paperColor)
-                    .testTag(TAG_RIGHT_PAGE),
-            ) {
-                Column(Modifier.fillMaxSize()) {
-                    PageHeader(ink) {
-                        Spacer(Modifier.weight(1f))
+            // Right page.
+            Box(Modifier.weight(1f).fillMaxHeight().clip(pageShape).background(paperColor).testTag(TAG_RIGHT_PAGE)) {
+                SpreadPage(
+                    vm, right, if (right != null) stateOf(right) else null, "right", ink, formatPinned, reading,
+                    // A new page goes on the right only once the left one exists.
+                    onNewPage = if (left != null) vm::addPage else null,
+                    onDelete = { confirmDelete = it },
+                    leading = {},
+                    trailing = {
                         SpreadToggle(Icons.Filled.TextFormat, if (formatPinned) "Hide formatting" else "Show formatting", formatPinned && !reading, ink, enabled = !reading, tag = "spread-format", onClick = vm::toggleFormat)
                         SpreadToggle(Icons.Filled.AutoStories, if (reading) "Edit" else "Read only", reading, ink, tag = TAG_READ_MODE, onClick = vm::toggleReading)
-                        if (page != null && !reading) {
-                            IconButton(onClick = { confirmDelete = true }, modifier = Modifier.testTag("page-delete")) { Icon(Icons.Filled.Delete, "Delete page", tint = ink) }
-                        }
                         IconButton(onClick = { vm.setBookView(false) }, modifier = Modifier.testTag(TAG_BOOK_VIEW)) { Icon(Icons.Filled.CloseFullscreen, "Leave book view", tint = ink) }
+                    },
+                )
+            }
+        }
+    }
+}
+
+/** One side of the book view: its header (date and controls) over the page itself, written in place. */
+@Composable
+private fun SpreadPage(
+    vm: JournalViewModel,
+    page: JournalPage?,
+    state: EditorState?,
+    side: String,
+    ink: Color,
+    formatPinned: Boolean,
+    reading: Boolean,
+    onNewPage: (() -> Unit)?,
+    onDelete: (JournalPage) -> Unit,
+    leading: @Composable () -> Unit,
+    trailing: @Composable () -> Unit,
+) {
+    Column(Modifier.fillMaxSize()) {
+        PageHeader(ink) {
+            leading()
+            Text(
+                page?.let { LocalDate.ofEpochDay(it.day).format(DateTimeFormatter.ofPattern("EEE, MMM d, yyyy")) }.orEmpty(),
+                style = MaterialTheme.typography.labelLarge,
+                fontFamily = FontFamily.Serif,
+                color = ink.copy(alpha = 0.75f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f).padding(horizontal = 12.dp).testTag("spread-date-$side"),
+            )
+            if (page != null && !reading) {
+                IconButton(onClick = { onDelete(page) }, modifier = Modifier.testTag("spread-delete-$side")) { Icon(Icons.Filled.Delete, "Delete page", tint = ink) }
+            }
+            trailing()
+        }
+        Box(Modifier.weight(1f).fillMaxWidth().imePadding()) {
+            if (page != null && state != null) {
+                NoteEditor(
+                    note = state,
+                    onChange = { content, plain -> vm.spreadDoc(page, content, plain) },
+                    wide = true,
+                    modifier = Modifier.fillMaxSize(),
+                    toolbarAtTop = true,
+                    showToolbar = formatPinned,
+                    readOnly = reading,
+                    header = {
+                        TextField(
+                            value = state.title,
+                            onValueChange = { vm.spreadTitle(page, it) },
+                            readOnly = reading,
+                            placeholder = { Text("Title") },
+                            textStyle = MaterialTheme.typography.headlineSmall.copy(fontFamily = FontFamily.Serif),
+                            singleLine = true,
+                            colors = TextFieldDefaults.colors(
+                                focusedContainerColor = Color.Transparent,
+                                unfocusedContainerColor = Color.Transparent,
+                                focusedIndicatorColor = Color.Transparent,
+                                unfocusedIndicatorColor = Color.Transparent,
+                            ),
+                            modifier = Modifier.fillMaxWidth().testTag("spread-title-$side"),
+                        )
+                    },
+                )
+            } else if (onNewPage != null && !reading) {
+                // The blank page after the last one: tap to start writing on it.
+                TextButton(onClick = onNewPage, modifier = Modifier.align(Alignment.Center).testTag("spread-new-$side")) {
+                    Icon(Icons.Filled.Add, null, tint = ink)
+                    Spacer(Modifier.width(6.dp))
+                    Text("New page", color = ink, fontFamily = FontFamily.Serif)
+                }
+            }
+        }
+    }
+}
+
+/** A chapter being named: a new one ([page] null), or the one starting at [page]. */
+private data class ChapterEdit(val page: JournalPage?, val initial: String)
+
+@Composable
+private fun ChapterDialog(edit: ChapterEdit, onSave: (String) -> Unit, onRemove: () -> Unit, onDismiss: () -> Unit) {
+    var name by remember { mutableStateOf(edit.initial) }
+    val existing = edit.page?.chapter != null
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (existing) "Chapter" else if (edit.page == null) "New chapter" else "Start a chapter here") },
+        text = {
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it },
+                singleLine = true,
+                placeholder = { Text("Chapter name") },
+                modifier = Modifier.fillMaxWidth().testTag(TAG_CHAPTER_NAME),
+            )
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onDismiss(); onSave(name.trim()) },
+                enabled = name.isNotBlank(),
+                modifier = Modifier.testTag(TAG_CHAPTER_SAVE),
+            ) { Text("Save") }
+        },
+        dismissButton = {
+            Row {
+                if (existing) TextButton(onClick = { onDismiss(); onRemove() }, modifier = Modifier.testTag("chapter-remove")) { Text("Remove chapter") }
+                TextButton(onClick = onDismiss) { Text("Cancel") }
+            }
+        },
+    )
+}
+
+/** The book's contents over the left page: page titles only, grouped under their chapters. */
+@Composable
+private fun SpreadContents(
+    order: List<JournalPage>,
+    stateOf: (JournalPage) -> EditorState,
+    showing: Set<Long>,
+    ink: Color,
+    cloth: Color,
+    onOpen: (Int) -> Unit,
+    onClose: () -> Unit,
+    onNewChapter: () -> Unit,
+    onChapter: (JournalPage) -> Unit,
+) {
+    Column(Modifier.fillMaxSize().testTag(TAG_CONTENTS)) {
+        PageHeader(ink) {
+            IconButton(onClick = onClose, modifier = Modifier.testTag("contents-close")) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back to the pages", tint = ink) }
+            Text("Contents", style = MaterialTheme.typography.titleMedium, fontFamily = FontFamily.Serif, color = ink, modifier = Modifier.weight(1f))
+            TextButton(onClick = onNewChapter, modifier = Modifier.testTag(TAG_NEW_CHAPTER)) {
+                Icon(Icons.Filled.Add, null, tint = ink, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(4.dp))
+                Text("New chapter", color = ink)
+            }
+        }
+        if (order.isEmpty()) {
+            Text("No pages yet", color = ink.copy(alpha = 0.6f), modifier = Modifier.padding(16.dp))
+        }
+        LazyColumn(Modifier.weight(1f)) {
+            var inChapter = false
+            order.forEachIndexed { index, p ->
+                if (p.chapter != null) {
+                    inChapter = true
+                    item(key = "chapter-${p.id}") {
+                        Text(
+                            p.chapter,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontFamily = FontFamily.Serif,
+                            fontWeight = FontWeight.SemiBold,
+                            color = lerp(cloth, ink, 0.35f),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onChapter(p) }
+                                .padding(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 4.dp)
+                                .testTag("chapter-${p.id}"),
+                        )
                     }
-                    Box(Modifier.weight(1f).fillMaxWidth()) {
-                        if (page != null) {
-                            PageEditor(
-                                vm, book, page, wide = true, insetTop = false, nav = {}, extra = {},
-                                showActions = false, showToolbar = formatPinned, readOnly = reading,
-                            )
-                        } else {
-                            EmptyPage(vm::newPageToday)
+                }
+                val indent = if (inChapter) 28.dp else 16.dp
+                item(key = p.id) {
+                    val title = stateOf(p).title.ifBlank { "Untitled page" }
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .background(if (p.id in showing) ink.copy(alpha = 0.08f) else Color.Transparent)
+                            .clickable { onOpen(index) }
+                            .padding(start = indent, end = 4.dp)
+                            .testTag("page-${p.id}"),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            title,
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontFamily = FontFamily.Serif,
+                            color = ink,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f).padding(vertical = 12.dp),
+                        )
+                        if (p.chapter == null) {
+                            IconButton(onClick = { onChapter(p) }, modifier = Modifier.testTag("start-chapter-${p.id}")) {
+                                Icon(Icons.Filled.BookmarkAdd, "Start a chapter here", tint = ink.copy(alpha = 0.45f), modifier = Modifier.size(20.dp))
+                            }
                         }
                     }
                 }
@@ -754,22 +927,6 @@ private fun PageHeader(ink: Color, content: @Composable androidx.compose.foundat
         verticalAlignment = Alignment.CenterVertically,
         content = content,
     )
-}
-
-/** The date and title at the top of a page being read. */
-@Composable
-private fun PageHeading(date: LocalDate, title: String) {
-    Column(Modifier.padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 8.dp)) {
-        Text(
-            date.format(DateTimeFormatter.ofPattern("EEEE, MMMM d, yyyy")),
-            style = MaterialTheme.typography.labelLarge,
-            fontFamily = FontFamily.Serif,
-            color = MaterialTheme.colorScheme.primary,
-        )
-        if (title.isNotBlank()) {
-            Text(title, style = MaterialTheme.typography.headlineSmall, fontFamily = FontFamily.Serif, color = MaterialTheme.colorScheme.onSurface)
-        }
-    }
 }
 
 /** A round on/off control along the top of the book view's page. */

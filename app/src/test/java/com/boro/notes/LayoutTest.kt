@@ -432,34 +432,54 @@ class InnerJournalLayoutTest {
         rule.onNodeWithTag(com.boro.notes.ui.TAG_BOOK_SPREAD).assertIsDisplayed()
         assertTrue(vm.bookView.value)
 
+        // An empty book: start a page on the left, then one on the right; both are written in place.
+        rule.onNodeWithTag("spread-new-left").performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag("spread-title-left").performTextReplacement("Moss walk")
+        rule.onNodeWithTag("spread-new-right").performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag("spread-title-right").performTextReplacement("Lichen")
+        rule.onNodeWithTag("spread-date-left").assertIsDisplayed()
+        rule.onNodeWithTag("spread-date-right").assertIsDisplayed()
+
+        // The contents list page titles, and a chapter can start at a page.
+        rule.onNodeWithTag("spread-contents").performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_CONTENTS).assertIsDisplayed()
+        val second = journals.pages.value.maxBy { it.id }
+        rule.onNodeWithTag("start-chapter-${second.id}").performClick()
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_CHAPTER_NAME).performTextReplacement("Autumn")
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_CHAPTER_SAVE).performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag("chapter-${second.id}").assertIsDisplayed()
+        rule.onNodeWithTag("contents-close").performClick()
+        rule.waitForIdle()
+
         // Leaving book view shows the pages beside the open page.
         rule.onNodeWithTag(com.boro.notes.ui.TAG_BOOK_VIEW).performClick()
         rule.waitForIdle()
         rule.onNodeWithTag(com.boro.notes.ui.TAG_BOOK_SPREAD).assertDoesNotExist()
         rule.onNodeWithTag(com.boro.notes.ui.TAG_PAGE_LIST).assertIsDisplayed()
-        rule.onNodeWithTag(com.boro.notes.ui.TAG_PAGE_TITLE).performTextReplacement("Moss walk")
-        rule.waitForIdle()
-
         rule.onNodeWithTag(com.boro.notes.ui.TAG_BOOK_VIEW).performClick()
         rule.waitForIdle()
         rule.onNodeWithTag(com.boro.notes.ui.TAG_BOOK_SPREAD).assertIsDisplayed()
-        rule.onNodeWithTag(com.boro.notes.ui.TAG_PAGE_LIST).assertIsDisplayed()
 
-        // Read only hides the delete control; tapping again goes back to editing.
+        // Read only hides the delete controls; tapping again goes back to editing.
         rule.onNodeWithTag(com.boro.notes.ui.TAG_READ_MODE).performClick()
         rule.waitForIdle()
         assertTrue(vm.reading.value)
-        rule.onNodeWithTag("page-delete").assertDoesNotExist()
+        rule.onNodeWithTag("spread-delete-right").assertDoesNotExist()
         rule.onNodeWithTag(com.boro.notes.ui.TAG_READ_MODE).performClick()
         rule.waitForIdle()
 
-        rule.onNodeWithTag("page-delete").performClick()
+        rule.onNodeWithTag("spread-delete-right").performClick()
         rule.waitForIdle()
         rule.onNodeWithTag(com.boro.notes.ui.TAG_CONFIRM_DELETE).performClick()
         rule.waitForIdle()
 
-        val page = journals.pages.value.single()
+        val trashed = journals.pages.value.single { it.deletedAt != null }
+        assertEquals("Lichen", trashed.title)
+        val page = journals.pages.value.single { it.deletedAt == null }
         assertEquals("Moss walk", page.title)
-        assertTrue(page.deletedAt != null)
     }
 }

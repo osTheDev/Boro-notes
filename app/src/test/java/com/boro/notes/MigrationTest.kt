@@ -180,4 +180,60 @@ class MigrationTest {
             database.close()
         }
     }
+
+    @Test
+    fun version5UpgradeKeepsPagesAndAddsChapters() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val name = "migration-test-v5.db"
+        context.deleteDatabase(name)
+        // Build a version 5 database through Room's own v5 schema: a v4 file upgraded once.
+        val file = context.getDatabasePath(name).apply { parentFile?.mkdirs() }
+        SQLiteDatabase.openOrCreateDatabase(file, null).use { db ->
+            db.execSQL(
+                "CREATE TABLE IF NOT EXISTS `notes` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                    "`title` TEXT NOT NULL, `body` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, `content` TEXT, `deletedAt` INTEGER)"
+            )
+            db.execSQL(
+                "CREATE TABLE IF NOT EXISTS `designs` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                    "`name` TEXT NOT NULL, `stage` TEXT NOT NULL, `noteId` INTEGER, `shapes` TEXT NOT NULL, " +
+                    "`createdAt` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, `deletedAt` INTEGER)"
+            )
+            db.execSQL(
+                "CREATE TABLE IF NOT EXISTS `habits` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                    "`name` TEXT NOT NULL, `color` INTEGER NOT NULL, `target` INTEGER NOT NULL, " +
+                    "`position` INTEGER NOT NULL, `createdAt` INTEGER NOT NULL)"
+            )
+            db.execSQL("CREATE TABLE IF NOT EXISTS `habit_checks` (`habitId` INTEGER NOT NULL, `day` INTEGER NOT NULL, PRIMARY KEY(`habitId`, `day`))")
+            db.execSQL(
+                "CREATE TABLE IF NOT EXISTS `todos` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                    "`text` TEXT NOT NULL, `done` INTEGER NOT NULL, `position` INTEGER NOT NULL, " +
+                    "`createdAt` INTEGER NOT NULL, `doneAt` INTEGER)"
+            )
+            db.execSQL(
+                "CREATE TABLE IF NOT EXISTS `journals` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                    "`title` TEXT NOT NULL, `color` INTEGER NOT NULL, `pattern` INTEGER NOT NULL, " +
+                    "`createdAt` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, `deletedAt` INTEGER)"
+            )
+            db.execSQL(
+                "CREATE TABLE IF NOT EXISTS `journal_pages` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                    "`journalId` INTEGER NOT NULL, `day` INTEGER NOT NULL, `title` TEXT NOT NULL, `body` TEXT NOT NULL, " +
+                    "`content` TEXT, `createdAt` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, `deletedAt` INTEGER)"
+            )
+            db.execSQL("INSERT INTO journals (title, color, pattern, createdAt, updatedAt, deletedAt) VALUES ('Days', 1, 2, 1, 1, NULL)")
+            db.execSQL("INSERT INTO journal_pages (journalId, day, title, body, content, createdAt, updatedAt, deletedAt) VALUES (1, 20000, 'Moss walk', 'green', NULL, 1, 1, NULL)")
+            db.version = 5
+        }
+
+        val database = NoteDatabase.create(context, name)
+        try {
+            val journals = com.boro.notes.data.RoomJournalRepository(database.journalDao())
+            val page = journals.observePages(1).first().single()
+            assertEquals("Moss walk", page.title)
+            assertEquals(null, page.chapter)
+            journals.setChapter(page.id, "Spring")
+            assertEquals("Spring", journals.getPage(page.id)?.chapter)
+        } finally {
+            database.close()
+        }
+    }
 }

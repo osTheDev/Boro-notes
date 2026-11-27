@@ -53,9 +53,119 @@ class JournalViewModel(
     val bookView: StateFlow<Boolean> = _bookView.asStateFlow()
 
     fun setBookView(on: Boolean) {
+        if (_bookView.value == on) return
         _bookView.value = on
-        if (!on) _reading.value = false
+        if (on) {
+            // The spread opens where the page was; both pages are then written side by side.
+            val at = _page.value?.let { open -> bookOrder().indexOfFirst { it.id == open.id } } ?: -1
+            leavePage()
+            _spread.value = if (at >= 0) at / 2 * 2 else -1
+        } else {
+            _reading.value = false
+            val left = spreadPages().firstOrNull()
+            dropBlankSpreadPages()
+            if (left != null && !isBlank(stateOf(left))) openPage(left.id)
+        }
     }
+
+    // ---- Book view: two facing pages, both written in place ----
+
+    private val _spread = MutableStateFlow(-1)
+    /** Book view: where the left page sits in [bookOrder] (always even); -1 means the latest spread. */
+    val spread: StateFlow<Int> = _spread.asStateFlow()
+
+    private val _drafts = MutableStateFlow<Map<Long, EditorState>>(emptyMap())
+    /** Pages written in this book with edits newer than what [pages] has loaded. */
+    val drafts: StateFlow<Map<Long, EditorState>> = _drafts.asStateFlow()
+    private val saveJobs = mutableMapOf<Long, Job>()
+    private val days = mutableMapOf<Long, Long>()
+
+    /** Pages in reading order: oldest first, like a book. */
+    fun bookOrder(list: List<JournalPage> = pages.value): List<JournalPage> = list.reversed()
+
+    /** The last spread: an odd page out sits alone on the left; a full last spread gets a blank one after it. */
+    fun lastSpread(count: Int = pages.value.size): Int = count / 2 * 2
+
+    fun spreadStart(count: Int = pages.value.size): Int =
+        _spread.value.let { if (it < 0 || it > lastSpread(count)) lastSpread(count) else it }
+
+    /** The (up to two) pages on the spread now showing. */
+    fun spreadPages(list: List<JournalPage> = pages.value): List<JournalPage> =
+        bookOrder(list).drop(spreadStart(list.size)).take(2)
+
+    /** What a page shows: its unsaved edits if any, else what's stored. */
+    fun stateOf(p: JournalPage): EditorState =
+        _page.value?.takeIf { it.id == p.id } ?: _drafts.value[p.id] ?: EditorState(p.id, p.title, p.body, p.content)
+
+    /** Turns to the spread holding book page [index] (0 = first). Blank pages left behind are dropped. */
+    fun turnTo(index: Int) {
+        val target = (index.coerceIn(0, lastSpread()) / 2) * 2
+        if (target == spreadStart()) return
+        dropBlankSpreadPages()
+        _spread.value = target
+    }
+
+    fun spreadTitle(p: JournalPage, title: String) = editSpreadPage(p) { it.copy(title = title) }
+
+    fun spreadDoc(p: JournalPage, content: String, plain: String) = editSpreadPage(p) { it.copy(body = plain, content = content) }
+
+    private fun editSpreadPage(p: JournalPage, change: (EditorState) -> EditorState) {
+        if (_page.value?.id == p.id) { edit(change); return }
+        val updated = change(stateOf(p))
+        _drafts.value = _drafts.value + (p.id to updated)
+        saveJobs[p.id]?.cancel()
+        saveJobs[p.id] = viewModelScope.launch {
+            delay(600)
+            repo.savePage(updated.id, updated.title, updated.body, updated.content)
+        }
+    }
+
+    /** A new page at the end of the book, dated today, optionally starting a chapter; the book turns to it. */
+    fun addPage(chapter: String? = null) {
+        val journal = _openId.value ?: return
+        viewModelScope.launch {
+            val day = today().toEpochDay()
+            val id = repo.createPage(journal, day)
+            chapter?.trim()?.takeIf { it.isNotEmpty() }?.let { repo.setChapter(id, it) }
+            days[id] = day
+            val all = repo.observePages(journal).first()
+            if (_openId.value != journal) return@launch
+            val at = bookOrder(all).indexOfFirst { it.id == id }
+            if (at >= 0 && at / 2 * 2 != spreadStart(all.size)) dropBlankSpreadPages()
+            _spread.value = at / 2 * 2
+        }
+    }
+
+    /** Starts a chapter at this page, renames it, or (blank) ends it so its pages join the chapter before. */
+    fun setChapter(pageId: Long, name: String?) = viewModelScope.launch {
+        repo.setChapter(pageId, name?.trim()?.takeIf { it.isNotEmpty() })
+    }
+
+    fun trashSpreadPage(id: Long) {
+        saveJobs.remove(id)?.cancel()
+        val state = _drafts.value[id]
+        _drafts.value = _drafts.value - id
+        if (_page.value?.id == id) { trashOpenPage(); return }
+        viewModelScope.launch {
+            state?.let { repo.savePage(it.id, it.title, it.body, it.content) }
+            repo.trashPage(id)
+        }
+    }
+
+    private fun dropBlankSpreadPages() {
+        spreadPages().forEach { p ->
+            if (_page.value?.id != p.id && isBlank(stateOf(p))) {
+                saveJobs.remove(p.id)?.cancel()
+                _drafts.value = _drafts.value - p.id
+                viewModelScope.launch { repo.deletePage(p.id) }
+            }
+        }
+    }
+
+    /** Nothing written: no title, no text, and the paper untouched (a drawing or photo counts as written). */
+    private fun isBlank(p: EditorState) =
+        p.title.isBlank() && p.body.isBlank() &&
+            NoteDoc.load(p.content, p.body).blocks.none { it is com.boro.notes.notes.ImageBlock || (it is com.boro.notes.notes.DrawingBlock && it.strokes.isNotEmpty()) }
 
     private val _formatPinned = MutableStateFlow(false)
     /** Book view: the formatting bar stays shown (pinned) or tucked away for a cleaner page. */
@@ -72,8 +182,6 @@ class JournalViewModel(
     val page: StateFlow<EditorState?> = _page.asStateFlow()
     private var pageDay: Long? = null
     private var saveJob: Job? = null
-    /** Pages left in this book, as last written: turning back to one shows it at once, without waiting on storage. */
-    private val visited = mutableMapOf<Long, Pair<EditorState, Long?>>()
 
     fun todayDate(): LocalDate = today()
 
@@ -95,15 +203,22 @@ class JournalViewModel(
     fun select(id: Long) {
         if (_openId.value == id) return
         leavePage()
-        visited.clear()
+        clearBook()
         _openId.value = id
     }
 
     fun closeBook() {
         _reading.value = false
+        if (_bookView.value) dropBlankSpreadPages()
         leavePage()
-        visited.clear()
+        clearBook()
         _openId.value = null
+    }
+
+    private fun clearBook() {
+        _drafts.value = emptyMap()
+        days.clear()
+        _spread.value = -1
     }
 
     /** Opens the newest page, or today's new page if the book is empty. */
@@ -124,9 +239,9 @@ class JournalViewModel(
      */
     fun openPage(id: Long) {
         if (_page.value?.id == id) return
-        visited[id]?.let { (state, day) ->
-            if (state.title.isBlank() && state.body.isBlank()) return // dropped when it was left
-            show(state, day)
+        _drafts.value[id]?.let { state ->
+            if (isBlank(state)) return // dropped when it was left
+            show(state, days[id] ?: pages.value.firstOrNull { it.id == id }?.day)
             return
         }
         pages.value.firstOrNull { it.id == id }?.let { p ->
@@ -173,7 +288,7 @@ class JournalViewModel(
         val p = _page.value ?: return
         saveJob?.cancel()
         _page.value = null
-        visited.remove(p.id)
+        _drafts.value = _drafts.value - p.id
         viewModelScope.launch {
             repo.savePage(p.id, p.title, p.body, p.content)
             repo.trashPage(p.id)
@@ -197,10 +312,12 @@ class JournalViewModel(
         saveJob?.cancel()
         pageDay = day
         _page.value = next
+        if (day != null && next != null) days[next.id] = day
         if (old == null || old.id == next?.id) return
-        visited[old.id] = old to oldDay
+        _drafts.value = _drafts.value + (old.id to old)
+        if (oldDay != null) days[old.id] = oldDay
         viewModelScope.launch {
-            if (old.title.isBlank() && old.body.isBlank()) repo.deletePage(old.id)
+            if (isBlank(old)) repo.deletePage(old.id)
             else repo.savePage(old.id, old.title, old.body, old.content)
         }
     }

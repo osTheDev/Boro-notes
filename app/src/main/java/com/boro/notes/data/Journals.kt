@@ -35,6 +35,8 @@ data class JournalPage(
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = createdAt,
     val deletedAt: Long? = null,
+    /** Set when a chapter starts at this page: the chapter's name. It runs until the next one starts. */
+    val chapter: String? = null,
 )
 
 @Dao
@@ -84,6 +86,9 @@ interface JournalDao {
     @Query("DELETE FROM journal_pages WHERE id = :id")
     suspend fun deletePage(id: Long)
 
+    @Query("UPDATE journal_pages SET chapter = :chapter WHERE id = :id")
+    suspend fun setChapter(id: Long, chapter: String?)
+
     @Query("SELECT id FROM journals WHERE deletedAt IS NOT NULL AND deletedAt < :before")
     suspend fun expiredJournals(before: Long): List<Long>
 
@@ -102,6 +107,8 @@ interface JournalRepository {
     suspend fun savePage(id: Long, title: String, body: String, content: String?)
     /** Deletes a page for good (blank pages). */
     suspend fun deletePage(id: Long)
+    /** Starts a chapter called [chapter] at this page, or (null) ends that chapter there. */
+    suspend fun setChapter(id: Long, chapter: String?)
 
     suspend fun trashJournal(id: Long)
     suspend fun restoreJournal(id: Long)
@@ -134,6 +141,7 @@ class RoomJournalRepository(private val dao: JournalDao) : JournalRepository {
         dao.getJournal(p.journalId)?.let { dao.updateJournal(it.copy(updatedAt = now())) }
     }
     override suspend fun deletePage(id: Long) = dao.deletePage(id)
+    override suspend fun setChapter(id: Long, chapter: String?) = dao.setChapter(id, chapter)
 
     override suspend fun trashJournal(id: Long) = dao.setJournalDeleted(id, now())
     override suspend fun restoreJournal(id: Long) = dao.setJournalDeleted(id, null)

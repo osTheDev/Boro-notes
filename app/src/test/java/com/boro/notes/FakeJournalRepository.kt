@@ -39,6 +39,9 @@ class FakeJournalRepository : JournalRepository {
     override suspend fun deletePage(id: Long) {
         pages.value = pages.value.filterNot { it.id == id }
     }
+    override suspend fun setChapter(id: Long, chapter: String?) {
+        pages.value = pages.value.map { if (it.id == id) it.copy(chapter = chapter) else it }
+    }
     override suspend fun trashJournal(id: Long) {
         val at = ++clock
         journals.value = journals.value.map { if (it.id == id) it.copy(deletedAt = at) else it }

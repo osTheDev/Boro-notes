@@ -136,4 +136,50 @@ class JournalViewModelTest {
         assertEquals(1, TrashViewModel.daysLeft(0, now = 6 * day + 1))
         assertEquals(0, TrashViewModel.daysLeft(0, now = 8 * day))
     }
+
+    @Test fun bookViewWritesBothPagesAndTurnsBySpreads() = runTest(dispatcher) {
+        vm.createJournal("Days", 0, 0)
+        advanceUntilIdle()
+        assertTrue(vm.bookView.value) // unfolded books open straight into book view
+
+        // Three pages: two on the first spread, the third alone on the next.
+        repeat(3) { vm.addPage(); advanceUntilIdle() }
+        val order = vm.bookOrder()
+        assertEquals(3, order.size)
+        assertEquals(2, vm.spreadStart()) // turned to the newest page
+        vm.turnTo(0)
+        assertEquals(order.take(2).map { it.id }, vm.spreadPages().map { it.id })
+
+        // Both facing pages are written in place, neither one primary.
+        vm.spreadTitle(order[0], "Left")
+        vm.spreadTitle(order[1], "Right")
+        advanceUntilIdle()
+        assertEquals(listOf("Left", "Right"), vm.bookOrder().take(2).map { it.title })
+
+        // Turning on and back again: the third page was blank, so it's dropped on the way.
+        vm.turnTo(2)
+        vm.turnTo(0)
+        advanceUntilIdle()
+        assertEquals(2, vm.bookOrder().size)
+        // At the end of a full spread there's a blank spread to start the next page on.
+        assertEquals(2, vm.lastSpread())
+    }
+
+    @Test fun chaptersStartAtAPageAndCanBeRemoved() = runTest(dispatcher) {
+        vm.createJournal("Days", 0, 0)
+        advanceUntilIdle()
+        vm.addPage()
+        advanceUntilIdle()
+        vm.spreadTitle(vm.bookOrder()[0], "Intro")
+        vm.addPage(chapter = " Spring ")
+        advanceUntilIdle()
+        val pages = vm.bookOrder()
+        assertEquals(listOf(null, "Spring"), pages.map { it.chapter })
+        vm.setChapter(pages[0].id, "Prologue")
+        advanceUntilIdle()
+        assertEquals("Prologue", vm.bookOrder()[0].chapter)
+        vm.setChapter(pages[1].id, "  ")
+        advanceUntilIdle()
+        assertNull(vm.bookOrder()[1].chapter)
+    }
 }
