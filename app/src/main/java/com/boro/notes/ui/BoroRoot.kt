@@ -12,6 +12,9 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.zIndex
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.ui.unit.dp
 import androidx.compose.material.icons.Icons
@@ -161,7 +164,14 @@ fun BoroRoot(
 
         if (wide) {
             Row(Modifier.fillMaxSize()) {
-                NavigationRail {
+                // A solid panel casting a shadow, so the side menu reads as its own surface
+                // and the textured screens sit beside it instead of just stopping.
+                NavigationRail(
+                    containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                    modifier = Modifier
+                        .zIndex(1f)
+                        .shadow(8.dp),
+                ) {
                     Section.entries.forEach { s ->
                         NavigationRailItem(
                             selected = section == s,
