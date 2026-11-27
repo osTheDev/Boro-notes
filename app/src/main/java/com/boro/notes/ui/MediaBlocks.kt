@@ -107,7 +107,7 @@ internal fun ImageBlockView(editor: DocEditor, block: ImageBlock) {
                 .fillMaxWidth(block.width.coerceIn(0.3f, 1f))
                 .clip(RoundedCornerShape(12.dp))
                 .border(if (selected) 3.dp else 0.dp, if (selected) cs.primary else Color.Transparent, RoundedCornerShape(12.dp))
-                .clickable { editor.focused = block.id },
+                .clickable(enabled = !editor.readOnly) { editor.focused = block.id },
         ) {
             val b = bitmap
             if (b != null) {
@@ -131,9 +131,10 @@ private fun Caption(editor: DocEditor, id: String, value: String, onChange: (Str
         textStyle = MaterialTheme.typography.bodySmall.copy(color = cs.onSurfaceVariant, textAlign = androidx.compose.ui.text.style.TextAlign.Center),
         cursorBrush = SolidColor(cs.primary),
         singleLine = true,
+        readOnly = editor.readOnly,
         decorationBox = { inner ->
             Box(contentAlignment = Alignment.Center) {
-                if (value.isEmpty()) Text("Add a caption", style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant.copy(alpha = 0.6f))
+                if (value.isEmpty() && !editor.readOnly) Text("Add a caption", style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant.copy(alpha = 0.6f))
                 inner()
             }
         },
@@ -160,7 +161,8 @@ internal fun DrawingBlockView(editor: DocEditor, block: DrawingBlock) {
                 .background(cs.surfaceContainerLow)
                 .border(if (active) 3.dp else 1.dp, if (active) cs.primary else cs.outlineVariant, RoundedCornerShape(12.dp))
                 .testTag(TAG_NOTE_DRAWING)
-                .pointerInput(active, block.id) {
+                .pointerInput(active, block.id, editor.readOnly) {
+                    if (editor.readOnly) return@pointerInput
                     if (!active) {
                         awaitEachGesture {
                             awaitFirstDown()
@@ -213,7 +215,7 @@ internal fun DrawingBlockView(editor: DocEditor, block: DrawingBlock) {
                 }
             }
         }
-        if (!active && block.strokes.isEmpty()) {
+        if (!active && block.strokes.isEmpty() && !editor.readOnly) {
             Text(
                 "Tap to draw",
                 style = MaterialTheme.typography.bodySmall,

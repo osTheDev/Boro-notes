@@ -49,7 +49,20 @@ class JournalViewModel(
     /** Inner screen: the open book spread across the whole screen as two facing pages. */
     val bookView: StateFlow<Boolean> = _bookView.asStateFlow()
 
-    fun setBookView(on: Boolean) { _bookView.value = on }
+    fun setBookView(on: Boolean) {
+        _bookView.value = on
+        if (!on) _reading.value = false
+    }
+
+    private val _formatPinned = MutableStateFlow(false)
+    /** Book view: the formatting bar stays shown (pinned) or tucked away for a cleaner page. */
+    val formatPinned: StateFlow<Boolean> = _formatPinned.asStateFlow()
+    fun toggleFormat() { _formatPinned.value = !_formatPinned.value }
+
+    private val _reading = MutableStateFlow(false)
+    /** Book view: read the pages without editing them. */
+    val reading: StateFlow<Boolean> = _reading.asStateFlow()
+    fun toggleReading() { _reading.value = !_reading.value }
 
     private val _page = MutableStateFlow<EditorState?>(null)
     /** The page being written, with edits not yet saved. */

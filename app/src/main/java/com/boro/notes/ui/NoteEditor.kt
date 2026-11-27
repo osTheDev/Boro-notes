@@ -10,6 +10,8 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.runtime.SideEffect
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -124,10 +126,14 @@ fun NoteEditor(
     toolbarAtTop: Boolean = false,
     barStart: @Composable () -> Unit = {},
     barEnd: @Composable () -> Unit = {},
+    /** False hides the formatting bar (e.g. the journal's book view with formatting tucked away). */
+    showToolbar: Boolean = true,
+    /** Reading only: nothing can be typed, drawn or changed. */
+    readOnly: Boolean = false,
 ) {
     // The editor owns the document once a note is open; reload only when another note opens.
     key(note.id) {
-        NoteEditorContent(note, onChange, wide, modifier, header, toolbarAtTop, barStart, barEnd)
+        NoteEditorContent(note, onChange, wide, modifier, header, toolbarAtTop, barStart, barEnd, showToolbar && !readOnly, readOnly)
     }
 }
 
@@ -145,6 +151,8 @@ internal class DocEditor(initial: NoteDoc) {
     var inkColor by mutableStateOf(INK_COLORS[0])
     var inkWidth by mutableStateOf(3f)
     var eraser by mutableStateOf(false)
+    /** Reading only: typing, drawing and selecting blocks are off. */
+    var readOnly by mutableStateOf(false)
 
     init {
         ensureStates(initial)
@@ -260,8 +268,16 @@ private fun NoteEditorContent(
     toolbarAtTop: Boolean,
     barStart: @Composable () -> Unit,
     barEnd: @Composable () -> Unit,
+    showToolbar: Boolean,
+    readOnly: Boolean,
 ) {
     val editor = remember { DocEditor(NoteDoc.load(note.content, note.body)) }
+    SideEffect {
+        if (editor.readOnly != readOnly) {
+            editor.readOnly = readOnly
+            if (readOnly) editor.focused = null
+        }
+    }
     val latestOnChange by rememberUpdatedState(onChange)
 
     // Save shortly after typing stops.
@@ -284,7 +300,10 @@ private fun NoteEditorContent(
     val paper = editor.doc.paper
     val lined = paper.pattern != PaperPattern.PLAIN
     Column(modifier) {
-        if (toolbarAtTop) FormattingBar(editor, atTop = true, start = barStart, end = barEnd)
+        if (toolbarAtTop && showToolbar) FormattingBar(editor, atTop = true, start = barStart, end = barEnd)
+        else if (toolbarAtTop) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            barStart(); Spacer(Modifier.weight(1f)); barEnd()
+        }
         PaperTheme(paper) {
           // The page is at least as tall as the screen, so paper and lines always reach the bottom.
           BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
@@ -327,14 +346,14 @@ private fun NoteEditorContent(
                     val tapToType = Modifier.clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null,
-                    ) { editor.focusLast() }
+                    ) { if (!editor.readOnly) editor.focusLast() }
                     Box(Modifier.fillMaxWidth().weight(1f).then(tapToType).testTag(TAG_NOTE_BLANK))
                     Box(Modifier.fillMaxWidth().height(lineHeight * 6).then(tapToType))
                 }
             }
           }
         }
-        if (!toolbarAtTop) FormattingBar(editor)
+        if (!toolbarAtTop && showToolbar) FormattingBar(editor)
     }
 }
 
@@ -465,6 +484,7 @@ private fun RichArea(
         textStyle = style,
         cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
         onTextLayout = { layout = it },
+        readOnly = editor.readOnly,
         modifier = modifier
             .fillMaxWidth()
             .bringIntoViewRequester(bringIntoView)
@@ -505,12 +525,14 @@ private fun CheckBlockView(editor: DocEditor, block: CheckBlock) {
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.testTag(TAG_NOTE_CHECK)) {
         Checkbox(
             checked = block.checked,
+            enabled = !editor.readOnly,
             onCheckedChange = { editor.update(editor.doc.replace(editor.latest(block).copy(checked = it))) },
         )
         BasicTextField(
             value = block.text,
             onValueChange = { editor.update(editor.doc.replace(editor.latest(block).copy(text = it))) },
             singleLine = true,
+            readOnly = editor.readOnly,
             textStyle = MaterialTheme.typography.bodyLarge.copy(
                 color = if (block.checked) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
                 textDecoration = if (block.checked) TextDecoration.LineThrough else null,
@@ -554,6 +576,7 @@ private fun TableBlockView(editor: DocEditor, block: TableBlock, wide: Boolean) 
                         BasicTextField(
                             value = cell,
                             onValueChange = { v -> editor.update(editor.doc.replace(editor.latest(block).setCell(r, c, v))) },
+                            readOnly = editor.readOnly,
                             textStyle = MaterialTheme.typography.bodyMedium.copy(
                                 color = MaterialTheme.colorScheme.onSurface,
                                 fontWeight = if (r == 0) FontWeight.SemiBold else FontWeight.Normal,
@@ -638,7 +661,7 @@ private fun DividerBlockView(editor: DocEditor, block: DividerBlock) {
     Box(
         Modifier
             .fillMaxWidth()
-            .clickable { editor.focused = block.id }
+            .clickable(enabled = !editor.readOnly) { editor.focused = block.id }
             .background(if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f) else Color.Transparent)
             .padding(vertical = 12.dp)
     ) {

@@ -429,6 +429,15 @@ class InnerJournalLayoutTest {
         rule.onNodeWithTag("book-1").performClick()
         rule.waitForIdle()
         rule.onNodeWithTag(com.boro.notes.ui.TAG_PAGE_LIST).assertIsDisplayed()
+        assertTrue(vm.bookView.value)
+
+        // Read only hides the delete control; tapping again goes back to editing.
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_READ_MODE).performClick()
+        rule.waitForIdle()
+        assertTrue(vm.reading.value)
+        rule.onNodeWithTag("page-delete").assertDoesNotExist()
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_READ_MODE).performClick()
+        rule.waitForIdle()
         rule.onNodeWithTag(com.boro.notes.ui.TAG_PAGE_TITLE).performTextReplacement("Moss walk")
         rule.waitForIdle()
 

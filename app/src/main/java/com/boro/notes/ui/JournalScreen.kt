@@ -28,6 +28,9 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.windowInsetsTopHeight
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
@@ -41,6 +44,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AutoStories
+import androidx.compose.material.icons.filled.TextFormat
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CloseFullscreen
 import androidx.compose.material.icons.filled.OpenInFull
@@ -114,6 +119,8 @@ const val TAG_COVER_TITLE = "coverTitle"
 const val TAG_COVER_SAVE = "coverSave"
 const val TAG_BOOK_VIEW = "bookView"
 const val TAG_BOOK_SPREAD = "bookSpread"
+const val TAG_BOOK_INFO = "bookInfo"
+const val TAG_READ_MODE = "readMode"
 
 /** Cover colours: indigo, rust, sage, ochre, plum, teal, oxblood, slate (same as the punch cards). */
 private fun coverColor(i: Int) = PUNCH_COLORS[i.mod(PUNCH_COLORS.size)]
@@ -526,16 +533,45 @@ private fun BookSpread(vm: JournalViewModel, book: Journal, pages: List<JournalP
     val spine = lerp(cloth, Color.Black, 0.3f)
     val leftShape = RoundedCornerShape(topStart = 10.dp, bottomStart = 10.dp, topEnd = 2.dp, bottomEnd = 2.dp)
     val rightShape = RoundedCornerShape(topStart = 2.dp, bottomStart = 2.dp, topEnd = 10.dp, bottomEnd = 10.dp)
-    Box(
+    val formatPinned by vm.formatPinned.collectAsStateWithLifecycle()
+    val reading by vm.reading.collectAsStateWithLifecycle()
+    var confirmDelete by remember { mutableStateOf(false) }
+    if (confirmDelete) ConfirmDeleteDialog("this page", onConfirm = vm::trashOpenPage, onDismiss = { confirmDelete = false })
+    val words = page?.body?.split(Regex("\\s+"))?.count { it.isNotBlank() } ?: 0
+    val index = pages.indexOfFirst { it.id == page?.id }
+    Column(
         Modifier
             .fillMaxSize()
             .background(cloth)
             .drawBehind { drawHomePattern(COVER_PATTERNS[book.pattern.mod(COVER_PATTERNS.size)], Color.White.copy(alpha = 0.12f), 26.dp.toPx()) }
-            .statusBarsPadding()
-            .padding(start = 12.dp, end = 12.dp, top = 6.dp, bottom = 12.dp)
             .testTag(TAG_BOOK_SPREAD),
     ) {
-        Row(Modifier.fillMaxSize()) {
+        // The strip by the camera, otherwise dead space: what day, how much, where in the book.
+        Box(Modifier.fillMaxWidth().windowInsetsTopHeight(WindowInsets.statusBars), contentAlignment = Alignment.Center) {
+            Text(
+                listOfNotNull(
+                    vm.dayOfOpenPage()?.format(DateTimeFormatter.ofPattern("EEE, MMM d")),
+                    if (page != null) (if (words == 1) "1 word" else "$words words") else null,
+                    if (index >= 0) "page ${pages.size - index} of ${pages.size}" else null,
+                ).joinToString("  ·  "),
+                style = MaterialTheme.typography.labelMedium,
+                color = Color.White.copy(alpha = 0.85f),
+                modifier = Modifier.testTag(TAG_BOOK_INFO),
+            )
+        }
+        // Book controls on the cloth, above the pages.
+        Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            val tint = Color.White
+            IconButton(onClick = onBack, modifier = Modifier.testTag("journal-back-spread")) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Close the book", tint = tint) }
+            Text(book.title.ifBlank { "Journal" }, style = MaterialTheme.typography.titleMedium, fontFamily = FontFamily.Serif, color = tint, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            SpreadToggle(Icons.Filled.TextFormat, if (formatPinned) "Hide formatting" else "Show formatting", formatPinned && !reading, enabled = !reading, tag = "spread-format", onClick = vm::toggleFormat)
+            SpreadToggle(Icons.Filled.AutoStories, if (reading) "Edit" else "Read only", reading, tag = TAG_READ_MODE, onClick = vm::toggleReading)
+            if (page != null && !reading) {
+                IconButton(onClick = { confirmDelete = true }, modifier = Modifier.testTag("page-delete")) { Icon(Icons.Filled.Delete, "Delete page", tint = tint) }
+            }
+            IconButton(onClick = { vm.setBookView(false) }, modifier = Modifier.testTag(TAG_BOOK_VIEW)) { Icon(Icons.Filled.CloseFullscreen, "Leave book view", tint = tint) }
+        }
+        Row(Modifier.fillMaxSize().padding(start = 12.dp, end = 12.dp, top = 2.dp, bottom = 12.dp)) {
             // Left page: the book's contents.
             PageList(
                 book, pages, page?.id,
@@ -562,13 +598,30 @@ private fun BookSpread(vm: JournalViewModel, book: Journal, pages: List<JournalP
             // Right page: the page being written.
             Box(Modifier.weight(1f).fillMaxHeight().clip(rightShape).background(Color(0xFFFBF5E6))) {
                 if (page != null) {
-                    PageEditor(vm, book, page, wide = true, insetTop = false, nav = {}, extra = { BookViewToggle(vm, on = true) })
+                    PageEditor(
+                        vm, book, page, wide = true, insetTop = false, nav = {}, extra = {},
+                        showActions = false, showToolbar = formatPinned, readOnly = reading,
+                    )
                 } else {
                     EmptyPage(vm::newPageToday)
                 }
             }
         }
     }
+}
+
+/** A round on/off control on the book view's cloth band. */
+@Composable
+private fun SpreadToggle(icon: androidx.compose.ui.graphics.vector.ImageVector, description: String, on: Boolean, tag: String, enabled: Boolean = true, onClick: () -> Unit) {
+    IconButton(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = Modifier
+            .padding(horizontal = 2.dp)
+            .clip(CircleShape)
+            .background(if (on) Color.White.copy(alpha = 0.25f) else Color.Transparent)
+            .testTag(tag),
+    ) { Icon(icon, description, tint = Color.White.copy(alpha = if (enabled) 1f else 0.4f)) }
 }
 
 @Composable
@@ -715,6 +768,10 @@ private fun PageEditor(
     extra: @Composable () -> Unit,
     /** Pad below the status bar (off when the book view frame already does). */
     insetTop: Boolean = true,
+    /** Book view: the actions live in the band above the pages instead. */
+    showActions: Boolean = true,
+    showToolbar: Boolean = true,
+    readOnly: Boolean = false,
 ) {
     var confirmDelete by remember { mutableStateOf(false) }
     if (confirmDelete) ConfirmDeleteDialog("this page", onConfirm = vm::trashOpenPage, onDismiss = { confirmDelete = false })
@@ -743,7 +800,9 @@ private fun PageEditor(
                 modifier = Modifier.fillMaxSize(),
                 toolbarAtTop = wide,
                 barStart = nav,
-                barEnd = actions,
+                barEnd = { if (showActions) actions() },
+                showToolbar = showToolbar,
+                readOnly = readOnly,
                 header = {
                     Column(Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp)) {
                         Text(
@@ -756,6 +815,7 @@ private fun PageEditor(
                     TextField(
                         value = page.title,
                         onValueChange = vm::onTitleChange,
+                        readOnly = readOnly,
                         placeholder = { Text("Title") },
                         textStyle = MaterialTheme.typography.headlineSmall.copy(fontFamily = FontFamily.Serif),
                         singleLine = true,
