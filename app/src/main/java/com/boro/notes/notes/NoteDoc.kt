@@ -83,6 +83,10 @@ data class NoteDoc(val blocks: List<Block>, val paper: Paper = Paper()) {
     companion object {
         private val json = Json { ignoreUnknownKeys = true; classDiscriminator = "type" }
 
+        /** A paper setting on its own (e.g. a journal's page paper), as JSON. */
+        fun encodePaper(paper: Paper): String = json.encodeToString(paper)
+        fun decodePaper(text: String?): Paper? = text?.let { runCatching { json.decodeFromString<Paper>(it) }.getOrNull() }
+
         fun newId(): String = UUID.randomUUID().toString().take(8)
 
         fun empty() = NoteDoc(listOf(TextBlock(newId())))

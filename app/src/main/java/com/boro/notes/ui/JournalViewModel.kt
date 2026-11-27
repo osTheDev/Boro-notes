@@ -112,9 +112,9 @@ class JournalViewModel(
     fun pageState(p: JournalPage): EditorState {
         val content = p.content
         val paper = when {
-            content == null -> if (p.title.isBlank() && p.body.isBlank()) NEW_PAGE else NoteDoc.load(null, p.body).copy(paper = JOURNAL_PAPER).encode()
+            content == null -> if (p.title.isBlank() && p.body.isBlank()) newPageContent() else NoteDoc.load(null, p.body).copy(paper = bookPaper()).encode()
             // Default values aren't written out, so no "paper" means the default one.
-            "\"paper\"" !in content -> NoteDoc.load(content, p.body).copy(paper = JOURNAL_PAPER).encode()
+            "\"paper\"" !in content -> NoteDoc.load(content, p.body).copy(paper = bookPaper()).encode()
             else -> content
         }
         return EditorState(p.id, p.title, p.body, paper)
@@ -153,13 +153,20 @@ class JournalViewModel(
     private suspend fun newBookPage(journal: Long): Long {
         val day = today().toEpochDay()
         val id = repo.createPage(journal, day)
-        repo.savePage(id, "", "", NEW_PAGE)
+        repo.savePage(id, "", "", newPageContent())
         days[id] = day
         return id
     }
 
     /** Plain notebook paper for a page that doesn't exist yet (e.g. while it's being made). */
-    fun blankPaper(slot: Int): EditorState = EditorState(-1L - slot, "", "", NEW_PAGE)
+    fun blankPaper(slot: Int): EditorState = EditorState(-1L - slot, "", "", newPageContent())
+
+    /** The page paper of a book (the open one by default): what its new pages start on. */
+    fun bookPaper(journal: Journal? = journals.value.firstOrNull { it.id == _openId.value }): Paper =
+        NoteDoc.decodePaper(journal?.paper) ?: JOURNAL_PAPER
+
+    /** An empty page on the open book's paper. Pages on the journal default share one, so it compares equal. */
+    private fun newPageContent(): String = bookPaper().let { if (it == JOURNAL_PAPER) NEW_PAGE else NoteDoc(listOf(TextBlock(NoteDoc.newId())), it).encode() }
 
     /** Page changes run one at a time, so dropping and making pages never race each other. */
     private val pageOps = Mutex()
@@ -274,13 +281,35 @@ class JournalViewModel(
 
     fun todayDate(): LocalDate = today()
 
-    fun createJournal(title: String, color: Int, pattern: Int) = viewModelScope.launch {
+    fun createJournal(title: String, color: Int, pattern: Int, paper: Paper? = null) = viewModelScope.launch {
         val id = repo.createJournal(title.trim().ifBlank { "Journal" }, color, pattern)
+        if (paper != null && paper != JOURNAL_PAPER) repo.getJournal(id)?.let { repo.updateJournal(it.copy(paper = NoteDoc.encodePaper(paper))) }
         _openId.value = id
     }
 
+    /**
+     * Saves a book's cover and settings. A new page paper also goes onto every page still on the
+     * old one; pages given their own paper keep it.
+     */
     fun updateJournal(journal: Journal) = viewModelScope.launch {
+        val old = repo.getJournal(journal.id)
         repo.updateJournal(journal.copy(title = journal.title.trim().ifBlank { "Journal" }))
+        val from = bookPaper(old)
+        val to = bookPaper(journal)
+        if (from == to) return@launch
+        fun repaper(content: String?, body: String): String? {
+            val doc = NoteDoc.load(content, body)
+            val current = if (content == null || "\"paper\"" !in content) from else doc.paper
+            return if (current == from) doc.copy(paper = to).encode() else null
+        }
+        // What's being written right now changes too, so a later save doesn't put the old paper back.
+        if (_openId.value == journal.id) _page.value?.let { p -> repaper(p.content, p.body)?.let { _page.value = p.copy(content = it) } }
+        if (_openId.value == journal.id) _drafts.value = _drafts.value.mapValues { (_, d) -> repaper(d.content, d.body)?.let { d.copy(content = it) } ?: d }
+        pageOps.withLock {
+            repo.observePages(journal.id).first().forEach { p ->
+                repaper(p.content, p.body)?.let { repo.savePage(p.id, p.title, p.body, it) }
+            }
+        }
     }
 
     fun trashJournal(id: Long) = viewModelScope.launch {
@@ -364,7 +393,7 @@ class JournalViewModel(
     private suspend fun startPage(journal: Long, day: Long) {
         val id = repo.createPage(journal, day)
         if (_openId.value != journal) return
-        show(EditorState(id, "", "", NEW_PAGE), day)
+        show(EditorState(id, "", "", newPageContent()), day)
     }
 
     fun dayOfOpenPage(): LocalDate? = pageDay?.let { LocalDate.ofEpochDay(it) }
@@ -424,7 +453,8 @@ class JournalViewModel(
 
     companion object {
         /** New pages start on cream ruled paper with a margin, like a notebook. */
-        private val JOURNAL_PAPER = Paper(PaperColor.CREAM, PaperPattern.RULED, margin = true)
+        /** The journal default: cream, ruled, with a margin. */
+        val JOURNAL_PAPER = Paper(PaperColor.CREAM, PaperPattern.RULED, margin = true)
         private val NEW_PAGE = NoteDoc(listOf(TextBlock(NoteDoc.newId())), JOURNAL_PAPER).encode()
 
         fun factory(repo: JournalRepository): ViewModelProvider.Factory = viewModelFactory {

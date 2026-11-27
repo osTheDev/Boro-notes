@@ -232,6 +232,11 @@ class MigrationTest {
             assertEquals(null, page.chapter)
             journals.setChapter(page.id, "Spring")
             assertEquals("Spring", journals.getPage(page.id)?.chapter)
+            // v7: a book-wide page paper, unset (journal default) on existing books.
+            val book = journals.getJournal(1)!!
+            assertEquals(null, book.paper)
+            journals.updateJournal(book.copy(paper = "{}"))
+            assertEquals("{}", journals.getJournal(1)?.paper)
         } finally {
             database.close()
         }

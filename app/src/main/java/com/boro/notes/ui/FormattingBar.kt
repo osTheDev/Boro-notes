@@ -467,7 +467,7 @@ private fun ChipTool(label: String, tag: String, selected: Boolean, onClick: () 
 
 /** Paper colour swatches, line pattern previews and the margin switch. */
 @Composable
-private fun PageMenu(paper: Paper, onChange: (Paper) -> Unit) {
+internal fun PageMenu(paper: Paper, onChange: (Paper) -> Unit) {
     val cs = MaterialTheme.colorScheme
     MenuLabel("Paper")
     SwatchGrid(

@@ -81,6 +81,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -96,6 +97,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -125,6 +127,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.boro.notes.data.Journal
 import com.boro.notes.data.JournalPage
 import com.boro.notes.ui.theme.HomePattern
+import com.boro.notes.notes.NoteDoc
+import com.boro.notes.notes.Paper
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -142,6 +146,7 @@ const val TAG_COVER_TITLE = "coverTitle"
 const val TAG_COVER_SAVE = "coverSave"
 const val TAG_BOOK_VIEW = "bookView"
 const val TAG_CONTENTS = "spreadContents"
+const val TAG_BOOK_PAPER = "bookPaper"
 const val TAG_SPREAD_TOOLBAR = "spreadToolbar"
 const val TAG_NEW_CHAPTER = "newChapter"
 const val TAG_CHAPTER_NAME = "chapterName"
@@ -184,7 +189,9 @@ fun JournalScreen(vm: JournalViewModel, wide: Boolean) {
 }
 
 /** What the cover editor is editing: a new book, or an existing one. */
-private data class CoverDraft(val id: Long?, val title: String, val color: Int, val pattern: Int)
+private data class CoverDraft(val id: Long?, val title: String, val color: Int, val pattern: Int, val paper: Paper = JournalViewModel.JOURNAL_PAPER)
+
+private fun Journal.draft() = CoverDraft(id, title, color, pattern, NoteDoc.decodePaper(paper) ?: JournalViewModel.JOURNAL_PAPER)
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -219,8 +226,8 @@ private fun Shelf(journals: List<Journal>, wide: Boolean, vm: JournalViewModel) 
                     d,
                     onChange = { draft = it },
                     onSave = {
-                        if (d.id == null) vm.createJournal(d.title, d.color, d.pattern)
-                        else journals.firstOrNull { it.id == d.id }?.let { vm.updateJournal(it.copy(title = d.title, color = d.color, pattern = d.pattern)) }
+                        if (d.id == null) vm.createJournal(d.title, d.color, d.pattern, d.paper)
+                        else journals.firstOrNull { it.id == d.id }?.let { vm.updateJournal(it.copy(title = d.title, color = d.color, pattern = d.pattern, paper = NoteDoc.encodePaper(d.paper))) }
                         draft = null
                     },
                     onCancel = { draft = null },
@@ -242,7 +249,7 @@ private fun Shelf(journals: List<Journal>, wide: Boolean, vm: JournalViewModel) 
                                         .fillMaxWidth()
                                         .combinedClickable(
                                             onClick = { vm.select(j.id) },
-                                            onLongClick = { draft = CoverDraft(j.id, j.title, j.color, j.pattern) },
+                                            onLongClick = { draft = j.draft() },
                                         )
                                         .testTag("book-${j.id}"),
                                 )
@@ -352,6 +359,9 @@ private fun CoverEditor(
                         }
                     }
                 }
+                // The paper every page in the book is on; a page can still have its own from its toolbar.
+                Text("Pages", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 4.dp))
+                Column(Modifier.testTag(TAG_BOOK_PAPER)) { PageMenu(draft.paper) { onChange(draft.copy(paper = it)) } }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Button(onClick = onSave, modifier = Modifier.testTag(TAG_COVER_SAVE)) { Text(if (draft.id == null) "Make book" else "Save") }
                     TextButton(onClick = onCancel) { Text("Cancel") }
@@ -437,7 +447,7 @@ private fun ClosedBook(book: Journal, vm: JournalViewModel, onOpenHere: () -> Un
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back to the shelf")
             }
             Spacer(Modifier.weight(1f))
-            IconButton(onClick = { editing = CoverDraft(book.id, book.title, book.color, book.pattern) }, modifier = Modifier.testTag("journal-edit-cover")) {
+            IconButton(onClick = { editing = book.draft() }, modifier = Modifier.testTag("journal-edit-cover")) {
                 Icon(Icons.Filled.Edit, "Edit cover")
             }
         }
@@ -446,7 +456,7 @@ private fun ClosedBook(book: Journal, vm: JournalViewModel, onOpenHere: () -> Un
             CoverEditor(
                 e,
                 onChange = { editing = it },
-                onSave = { vm.updateJournal(book.copy(title = e.title, color = e.color, pattern = e.pattern)); editing = null },
+                onSave = { vm.updateJournal(book.copy(title = e.title, color = e.color, pattern = e.pattern, paper = NoteDoc.encodePaper(e.paper))); editing = null },
                 onCancel = { editing = null },
                 onDelete = { vm.trashJournal(book.id); editing = null },
             )
@@ -690,11 +700,11 @@ private fun BookSpread(vm: JournalViewModel, book: Journal, pages: List<JournalP
                         onEditor = { editors["left"] = it },
                         onDelete = { confirmDelete = it },
                         leading = {
-                            IconButton(onClick = onBack, modifier = Modifier.testTag("journal-back-spread")) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Close the book", tint = ink) }
+                            IconButton(onClick = onBack, modifier = Modifier.testTag("journal-back-spread")) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Close the book", tint = LocalContentColor.current) }
                         },
                         trailing = {
                             IconButton(onClick = { showContents = true }, modifier = Modifier.testTag("spread-contents")) {
-                                Icon(Icons.AutoMirrored.Filled.List, "Contents", tint = ink)
+                                Icon(Icons.AutoMirrored.Filled.List, "Contents", tint = LocalContentColor.current)
                             }
                         },
                     )
@@ -723,9 +733,9 @@ private fun BookSpread(vm: JournalViewModel, book: Journal, pages: List<JournalP
                     onDelete = { confirmDelete = it },
                     leading = {},
                     trailing = {
-                        SpreadToggle(Icons.Filled.TextFormat, if (formatPinned) "Hide formatting" else "Show formatting", formatPinned && !reading, ink, enabled = !reading, tag = "spread-format", onClick = vm::toggleFormat)
-                        SpreadToggle(Icons.Filled.AutoStories, if (reading) "Edit" else "Read only", reading, ink, tag = TAG_READ_MODE, onClick = vm::toggleReading)
-                        IconButton(onClick = { vm.setBookView(false) }, modifier = Modifier.testTag(TAG_BOOK_VIEW)) { Icon(Icons.Filled.CloseFullscreen, "Leave book view", tint = ink) }
+                        SpreadToggle(Icons.Filled.TextFormat, if (formatPinned) "Hide formatting" else "Show formatting", formatPinned && !reading, LocalContentColor.current, enabled = !reading, tag = "spread-format", onClick = vm::toggleFormat)
+                        SpreadToggle(Icons.Filled.AutoStories, if (reading) "Edit" else "Read only", reading, LocalContentColor.current, tag = TAG_READ_MODE, onClick = vm::toggleReading)
+                        IconButton(onClick = { vm.setBookView(false) }, modifier = Modifier.testTag(TAG_BOOK_VIEW)) { Icon(Icons.Filled.CloseFullscreen, "Leave book view", tint = LocalContentColor.current) }
                     },
                 )
                 SpreadToolbar(editors["left"].takeIf { left != null && !showContents }, visible = formatPinned && !reading && activeSide == "left")
@@ -757,23 +767,28 @@ private fun SpreadPage(
             primary = Color(0xFF3B5BA9),
         ),
     ) {
-    Column(Modifier.fillMaxSize()) {
-        PageHeader(ink) {
+    // The header sits on the page's own paper, with ink that reads on it.
+    val paper = remember(state?.content) { NoteDoc.load(state?.content ?: vm.blankPaper(0).content, state?.body.orEmpty()).paper }
+    val headerInk = if (paper.color.dark) Color(0xFFF1EEE8) else ink
+    Column(Modifier.fillMaxSize().background(paper.color.argb?.let { Color(it) } ?: Color(0xFFFBF5E6))) {
+      CompositionLocalProvider(LocalContentColor provides headerInk) {
+        PageHeader(headerInk) {
             leading()
             Text(
                 page?.let { LocalDate.ofEpochDay(it.day).format(DateTimeFormatter.ofPattern("EEE, MMM d, yyyy")) }.orEmpty(),
                 style = MaterialTheme.typography.labelLarge,
                 fontFamily = FontFamily.Serif,
-                color = ink.copy(alpha = 0.75f),
+                color = headerInk.copy(alpha = 0.75f),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f).padding(horizontal = 12.dp).testTag("spread-date-$side"),
             )
             if (page != null && !reading) {
-                IconButton(onClick = { onDelete(page) }, modifier = Modifier.testTag("spread-delete-$side")) { Icon(Icons.Filled.Delete, "Delete page", tint = ink) }
+                IconButton(onClick = { onDelete(page) }, modifier = Modifier.testTag("spread-delete-$side")) { Icon(Icons.Filled.Delete, "Delete page", tint = headerInk) }
             }
             trailing()
         }
+      }
         Box(Modifier.weight(1f).fillMaxWidth().imePadding()) {
             if (page != null && state != null) {
                 NoteEditor(

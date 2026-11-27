@@ -20,6 +20,8 @@ data class Journal(
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = createdAt,
     val deletedAt: Long? = null,
+    /** The book's page paper (a [com.boro.notes.notes.Paper] as JSON); null is the journal default, ruled cream. */
+    val paper: String? = null,
 )
 
 /** A dated page in a journal. Formatted like a note (see [com.boro.notes.notes.NoteDoc]). */

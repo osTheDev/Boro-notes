@@ -207,4 +207,26 @@ class JournalViewModelTest {
             assertEquals("hello", doc.plainText().trim())
         }
     }
+
+    @Test fun bookPaperRepapersPagesButKeepsCustomOnes() = runTest(dispatcher) {
+        vm.createJournal("Days", 0, 0)
+        advanceUntilIdle()
+        repeat(2) { vm.addPage(); advanceUntilIdle() }
+        val (plain, custom) = vm.bookOrder()
+        vm.spreadTitle(plain, "On the book paper")
+        // One page gets its own paper.
+        val own = com.boro.notes.notes.NoteDoc.load(vm.stateOf(custom).content, "")
+            .copy(paper = com.boro.notes.notes.Paper(com.boro.notes.notes.PaperColor.SAGE)).encode()
+        vm.spreadDoc(custom, own, "mine")
+        advanceUntilIdle()
+
+        val sky = com.boro.notes.notes.Paper(com.boro.notes.notes.PaperColor.SKY, com.boro.notes.notes.PaperPattern.GRID)
+        vm.updateJournal(vm.journals.value.single().copy(paper = com.boro.notes.notes.NoteDoc.encodePaper(sky)))
+        advanceUntilIdle()
+        val papers = vm.bookOrder().map { com.boro.notes.notes.NoteDoc.load(it.content, it.body).paper.color }
+        assertEquals(listOf(com.boro.notes.notes.PaperColor.SKY, com.boro.notes.notes.PaperColor.SAGE), papers)
+        // New pages start on the book's paper.
+        assertEquals(sky, vm.bookPaper())
+        assertEquals(sky, com.boro.notes.notes.NoteDoc.load(vm.blankPaper(0).content, "").paper)
+    }
 }
