@@ -20,6 +20,14 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
+import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.ime
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.platform.LocalDensity
+import kotlinx.coroutines.delay
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
@@ -59,6 +67,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -135,7 +144,7 @@ fun TasksScreen(vm: TasksViewModel, wide: Boolean) {
         val saving: LazyListScope.() -> Unit = { savingSection(vm, wishes, bought, wishSort) }
         val pad = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 24.dp)
         if (wide) {
-            Row(Modifier.padding(padding).fillMaxSize()) {
+            Row(Modifier.padding(padding).consumeWindowInsets(padding).imePadding().fillMaxSize()) {
                 LazyColumn(Modifier.weight(1f), contentPadding = pad, verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     cards()
                     item { Spacer(Modifier.height(8.dp)) }
@@ -145,7 +154,7 @@ fun TasksScreen(vm: TasksViewModel, wide: Boolean) {
                 LazyColumn(Modifier.weight(1f), contentPadding = pad, verticalArrangement = Arrangement.spacedBy(4.dp)) { list() }
             }
         } else {
-            LazyColumn(Modifier.padding(padding).fillMaxSize(), contentPadding = pad, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            LazyColumn(Modifier.padding(padding).consumeWindowInsets(padding).imePadding().fillMaxSize(), contentPadding = pad, verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 cards()
                 item { Spacer(Modifier.padding(4.dp)) }
                 list()
@@ -617,7 +626,14 @@ private fun LazyListScope.savingSection(vm: TasksViewModel, wishes: List<Wish>, 
                 HorizontalDivider(Modifier.padding(top = 8.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Bought (${bought.size})", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
-                    TextButton(onClick = { vm.clearBought() }, modifier = Modifier.testTag("wish-clear")) { Text("Clear bought") }
+                    var confirm by remember { mutableStateOf(false) }
+                    TextButton(onClick = { confirm = true }, modifier = Modifier.testTag("wish-clear")) { Text("Clear bought") }
+                    if (confirm) ConfirmDeleteDialog(
+                        if (bought.size == 1) "the bought item" else "all ${bought.size} bought items",
+                        toTrash = false,
+                        onConfirm = { vm.clearBought() },
+                        onDismiss = { confirm = false },
+                    )
                 }
             }
         }
@@ -626,6 +642,7 @@ private fun LazyListScope.savingSection(vm: TasksViewModel, wishes: List<Wish>, 
 }
 
 /** Name and price on one slim pill, then +. */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun WishInput(vm: TasksViewModel) {
     var name by rememberSaveable { mutableStateOf("") }
@@ -634,8 +651,24 @@ private fun WishInput(vm: TasksViewModel) {
     val add = { if (ok) { vm.addWish(name, price); name = ""; price = "" } }
     val cs = MaterialTheme.colorScheme
     val style = MaterialTheme.typography.bodyMedium.copy(color = cs.onSurface)
+    // While typing here, keep the pill just above the keyboard.
+    val requester = remember { BringIntoViewRequester() }
+    var typing by remember { mutableStateOf(false) }
+    val imeBottom = WindowInsets.ime.getBottom(LocalDensity.current)
+    LaunchedEffect(typing, imeBottom) {
+        if (typing) {
+            delay(80)
+            runCatching { requester.bringIntoView() }
+        }
+    }
     Row(
-        Modifier.fillMaxWidth().height(40.dp).clip(RoundedCornerShape(50)).background(cs.surfaceContainerHigh),
+        Modifier
+            .fillMaxWidth()
+            .bringIntoViewRequester(requester)
+            .onFocusChanged { typing = it.hasFocus }
+            .height(40.dp)
+            .clip(RoundedCornerShape(50))
+            .background(cs.surfaceContainerHigh),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         BasicTextField(

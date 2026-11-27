@@ -20,10 +20,24 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.gestures.calculateCentroid
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.wrapContentSize
+import androidx.compose.material.icons.filled.Apps
+import androidx.compose.material.icons.filled.CropSquare
+import androidx.compose.material.icons.filled.Reorder
+import androidx.compose.material.icons.filled.ZoomOutMap
+import androidx.compose.material3.LocalContentColor
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntOffset
+import kotlin.math.roundToInt
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.automirrored.filled.Undo
@@ -84,6 +98,8 @@ internal fun DrawingOverlay(editor: DocEditor, original: DrawingBlock, onDone: (
     var draft by remember(original.id) { mutableStateOf(original) }
     val redo = remember(original.id) { mutableStateListOf<InkStroke>() }
     val live = remember { mutableStateListOf<Offset>() }
+    var zoom by remember { mutableStateOf(1f) }
+    var pan by remember { mutableStateOf(Offset.Zero) }
     val cs = MaterialTheme.colorScheme
     fun change(d: DrawingBlock) { draft = d }
 
@@ -97,6 +113,22 @@ internal fun DrawingOverlay(editor: DocEditor, original: DrawingBlock, onDone: (
                     IconButton(onClick = onCancel, modifier = Modifier.testTag("drawing-cancel")) { Icon(Icons.Filled.Close, "Discard changes") }
                     Text(if (isNew) "New drawing" else "Drawing", style = MaterialTheme.typography.titleMedium)
                     Spacer(Modifier.weight(1f))
+                        if (zoom > 1.01f || pan != Offset.Zero) {
+                            Row(
+                                Modifier
+                                    .padding(horizontal = 10.dp)
+                                    .clip(RoundedCornerShape(50))
+                                    .background(cs.inverseSurface)
+                                    .clickable { zoom = 1f; pan = Offset.Zero }
+                                    .padding(horizontal = 12.dp, vertical = 6.dp)
+                                    .testTag("drawing-zoom-reset"),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Icon(Icons.Filled.ZoomOutMap, null, tint = cs.inverseOnSurface, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("${(zoom * 100).roundToInt()}%", color = cs.inverseOnSurface, style = MaterialTheme.typography.labelLarge)
+                            }
+                        }
                     Button(onClick = { onDone(draft) }, modifier = Modifier.testTag("drawing-insert")) {
                         Icon(Icons.Filled.Check, null, Modifier.size(18.dp))
                         Spacer(Modifier.width(6.dp))
@@ -104,49 +136,81 @@ internal fun DrawingOverlay(editor: DocEditor, original: DrawingBlock, onDone: (
                     }
                 }
                 // The canvas is as wide as the note's page, so the drawing lands exactly as drawn.
+                // One finger draws; two fingers pinch to zoom and drag to move around.
                 BoxWithConstraints(
-                    Modifier.weight(1f).fillMaxWidth().background(cs.surfaceContainerHighest.copy(alpha = 0.5f)),
-                    contentAlignment = Alignment.Center,
+                    Modifier.weight(1f).fillMaxWidth().clipToBounds().background(cs.surfaceContainerHighest.copy(alpha = 0.5f)),
                 ) {
                     val room = maxWidth - 32.dp
                     val width = if (editor.pageWidthDp > 0f) minOf(room, editor.pageWidthDp.dp) else room
-                    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    val baseX = with(LocalDensity.current) { ((maxWidth - width) / 2).toPx() }
+                    val baseY = with(LocalDensity.current) { 16.dp.toPx() }
+                    Box(
+                        Modifier
+                            .fillMaxSize()
+                            .testTag(TAG_DRAWING_CANVAS)
+                            .pointerInput(original.id, baseX, baseY, width) {
+                                awaitEachGesture {
+                                    val down = awaitFirstDown(requireUnconsumed = false)
+                                    val w = width.toPx().coerceAtLeast(1f)
+                                    fun local(p: Offset) = Offset((p.x - baseX - pan.x) / zoom, (p.y - baseY - pan.y) / zoom)
+                                    val start = local(down.position)
+                                    var drawing = start.x in 0f..w && start.y in 0f..draft.height.dp.toPx()
+                                    live.clear()
+                                    if (drawing) live.add(start)
+                                    down.consume()
+                                    while (true) {
+                                        val event = awaitPointerEvent()
+                                        val pressed = event.changes.filter { it.pressed }
+                                        if (pressed.isEmpty()) break
+                                        if (pressed.size >= 2) {
+                                            // A second finger: this is a pinch, not a stroke.
+                                            drawing = false
+                                            live.clear()
+                                            val centroid = event.calculateCentroid()
+                                            val newZoom = (zoom * event.calculateZoom()).coerceIn(1f, 5f)
+                                            val k = newZoom / zoom
+                                            val anchor = centroid - Offset(baseX, baseY)
+                                            pan = anchor - (anchor - pan) * k + event.calculatePan()
+                                            zoom = newZoom
+                                            event.changes.forEach { it.consume() }
+                                        } else if (drawing) {
+                                            val c = event.changes.firstOrNull { it.id == down.id } ?: break
+                                            c.consume()
+                                            live.add(local(c.position))
+                                        }
+                                    }
+                                    val pts = live.toList()
+                                    live.clear()
+                                    if (!drawing || pts.isEmpty()) return@awaitEachGesture
+                                    if (editor.eraser) {
+                                        val radius = 14.dp.toPx() / zoom
+                                        val kept = draft.strokes.filterNot { s -> s.toPx(w, density).any { p -> pts.any { q -> hypot(p.x - q.x, p.y - q.y) < radius } } }
+                                        if (kept.size != draft.strokes.size) change(draft.copy(strokes = kept))
+                                    } else {
+                                        val flat = pts.flatMap { listOf(it.x / w, it.y / density) }
+                                        change(draft.copy(strokes = draft.strokes + InkStroke(editor.inkColor, editor.inkWidth, flat)))
+                                        redo.clear()
+                                    }
+                                }
+                            },
+                    ) {
                         InkCanvas(
                             draft,
                             Modifier
+                                .wrapContentSize(Alignment.TopStart, unbounded = true)
+                                .offset { IntOffset(baseX.roundToInt(), baseY.roundToInt()) }
+                                .graphicsLayer {
+                                    transformOrigin = TransformOrigin(0f, 0f)
+                                    scaleX = zoom
+                                    scaleY = zoom
+                                    translationX = pan.x
+                                    translationY = pan.y
+                                }
                                 .width(width)
                                 .height(draft.height.dp)
                                 .clip(RoundedCornerShape(12.dp))
                                 .border(1.dp, cs.outlineVariant, RoundedCornerShape(12.dp))
-                                .background(cs.surface)
-                                .testTag(TAG_DRAWING_CANVAS)
-                                .pointerInput(original.id) {
-                                    awaitEachGesture {
-                                        val down = awaitFirstDown()
-                                        down.consume()
-                                        live.clear()
-                                        live.add(down.position)
-                                        while (true) {
-                                            val event = awaitPointerEvent()
-                                            val c = event.changes.firstOrNull { it.id == down.id } ?: break
-                                            if (!c.pressed) break
-                                            c.consume()
-                                            live.add(c.position)
-                                        }
-                                        val w = size.width.toFloat().coerceAtLeast(1f)
-                                        val pts = live.toList()
-                                        live.clear()
-                                        if (editor.eraser) {
-                                            val radius = 14.dp.toPx()
-                                            val kept = draft.strokes.filterNot { s -> s.toPx(w, density).any { p -> pts.any { q -> hypot(p.x - q.x, p.y - q.y) < radius } } }
-                                            if (kept.size != draft.strokes.size) change(draft.copy(strokes = kept))
-                                        } else if (pts.isNotEmpty()) {
-                                            val flat = pts.flatMap { listOf(it.x / w, it.y / density) }
-                                            change(draft.copy(strokes = draft.strokes + InkStroke(editor.inkColor, editor.inkWidth, flat)))
-                                            redo.clear()
-                                        }
-                                    }
-                                },
+                                .background(cs.surface),
                             live = live,
                             liveColor = if (editor.eraser) cs.error.copy(alpha = 0.4f) else Color(editor.inkColor),
                             liveWidth = if (editor.eraser) 28f else editor.inkWidth,
@@ -180,17 +244,18 @@ internal fun DrawingOverlay(editor: DocEditor, original: DrawingBlock, onDone: (
                         }
                     }
                     ToolGroup(cs.secondaryContainer, cs.onSecondaryContainer) {
-                        ToolMenu(Icons.Filled.LineWeight, "Pen size", "ink-size") { close ->
-                            MenuLabel("Pen size")
-                            listOf("Fine" to 2f, "Medium" to 4f, "Bold" to 7f, "Marker" to 12f).forEach { (name, w) ->
-                                DropdownMenuItem(
-                                    text = { Text(name) },
-                                    leadingIcon = { Box(Modifier.size(28.dp), contentAlignment = Alignment.Center) { Box(Modifier.size(w.dp + 2.dp).background(Color(editor.inkColor), CircleShape)) } },
-                                    trailingIcon = { if (editor.inkWidth == w) Icon(Icons.Filled.Check, null) },
-                                    onClick = { editor.inkWidth = w; editor.eraser = false; close() },
-                                    modifier = Modifier.testTag("ink-size-${name.lowercase()}"),
-                                )
-                            }
+                        // Pen sizes as dots you can see at a glance.
+                        listOf("fine" to 2f, "medium" to 4f, "bold" to 7f, "marker" to 12f).forEach { (name, w) ->
+                            val on = editor.inkWidth == w && !editor.eraser
+                            Box(
+                                Modifier
+                                    .size(42.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(if (on) LocalContentColor.current.copy(alpha = 0.18f) else Color.Transparent)
+                                    .clickable { editor.inkWidth = w; editor.eraser = false }
+                                    .testTag("ink-size-$name"),
+                                contentAlignment = Alignment.Center,
+                            ) { Box(Modifier.size(w.dp + 3.dp).background(Color(editor.inkColor), CircleShape).border(1.dp, LocalContentColor.current.copy(alpha = 0.3f), CircleShape)) }
                         }
                         ToolButton(Icons.Filled.AutoFixNormal, "Eraser", "ink-eraser", selected = editor.eraser) { editor.eraser = !editor.eraser }
                         ToolButton(Icons.AutoMirrored.Filled.Undo, "Undo stroke", "ink-undo", enabled = draft.strokes.isNotEmpty()) {
@@ -216,17 +281,12 @@ internal fun DrawingOverlay(editor: DocEditor, original: DrawingBlock, onDone: (
                                 close()
                             }
                         }
-                        ToolMenu(Icons.Filled.GridOn, "Guide", "drawing-pattern") { close ->
-                            MenuLabel("Guide")
-                            DRAWING_PATTERNS.forEachIndexed { i, name ->
-                                DropdownMenuItem(
-                                    text = { Text(name) },
-                                    trailingIcon = { if (draft.pattern == i) Icon(Icons.Filled.Check, null) },
-                                    onClick = { change(draft.copy(pattern = i)); close() },
-                                    modifier = Modifier.testTag("drawing-pattern-$i"),
-                                )
-                            }
-                        }
+                        // Tap to step through the guides: plain, dots, grid, lines.
+                        ToolButton(
+                            when (draft.pattern) { 1 -> Icons.Filled.Apps; 2 -> Icons.Filled.GridOn; 3 -> Icons.Filled.Reorder; else -> Icons.Filled.CropSquare },
+                            "Guide: ${DRAWING_PATTERNS[draft.pattern.coerceIn(0, 3)]}",
+                            "drawing-pattern",
+                        ) { change(draft.copy(pattern = (draft.pattern + 1) % DRAWING_PATTERNS.size)) }
                         ToolButton(Icons.Filled.UnfoldMore, "Taller", "drawing-taller") {
                             change(draft.copy(height = (draft.height + 80).coerceAtMost(1200)))
                         }

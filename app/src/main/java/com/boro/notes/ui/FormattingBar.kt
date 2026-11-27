@@ -181,13 +181,9 @@ internal fun FormattingBar(
             Text("Format", color = cs.onPrimaryContainer, style = MaterialTheme.typography.labelLarge)
         }
     }
-    val blockRow: @Composable () -> Unit = {
-        if (open && focusedBlock != null && focusedBlock !is TextBlock) {
-            if (atTop) HorizontalDivider(color = cs.outlineVariant.copy(alpha = 0.5f))
-            BlockToolsRow(editor, focusedBlock)
-            if (!atTop) HorizontalDivider(color = cs.outlineVariant.copy(alpha = 0.5f))
-        }
-    }
+    // The bar follows what you're working on: typing shows text tools, a selected table, photo,
+    // drawing or divider shows only its own tools, and nothing selected shows insert and page.
+    val objectSelected = focusedBlock is TableBlock || focusedBlock is ImageBlock || focusedBlock is DrawingBlock || focusedBlock is DividerBlock
 
     Surface(
         tonalElevation = 3.dp,
@@ -195,7 +191,6 @@ internal fun FormattingBar(
         modifier = Modifier.fillMaxWidth().testTag(TAG_FORMAT_BAR),
     ) {
       Column {
-        if (!atTop) blockRow()
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
           start()
           Box(Modifier.weight(1f)) {
@@ -206,6 +201,7 @@ internal fun FormattingBar(
                 ) { showPill() }
             } else {
             val tools: @Composable () -> Unit = {
+              if (rich != null) {
                 // Text: paragraph style, B I U S, colour, highlight.
                 ToolGroup(cs.primaryContainer, cs.onPrimaryContainer) {
                     ToolMenu(Icons.Filled.TextFields, "Text style", "format-style") { close ->
@@ -268,7 +264,6 @@ internal fun FormattingBar(
                     ToolButton(Icons.Filled.FormatListNumbered, "Numbers", "format-numbers", enabled = rich != null, selected = rich?.isOrderedList == true) {
                         rich?.toggleOrderedList()
                     }
-                    ToolButton(Icons.Filled.CheckBox, "Checklist", "insert-check") { insert(CheckBlock(NoteDoc.newId())) }
                     ToolButton(Icons.AutoMirrored.Filled.FormatIndentDecrease, "Outdent", "format-outdent", enabled = rich?.canDecreaseListLevel == true) {
                         rich?.decreaseListLevel()
                     }
@@ -276,8 +271,11 @@ internal fun FormattingBar(
                         rich?.increaseListLevel()
                     }
                 }
+              }
+              if (!objectSelected) {
                 // Insert blocks.
                 ToolGroup(cs.tertiaryContainer, cs.onTertiaryContainer) {
+                    ToolButton(Icons.Filled.CheckBox, "Checklist", "insert-check") { insert(CheckBlock(NoteDoc.newId())) }
                     ToolButton(Icons.Filled.TableChart, "Insert table", "insert-table") {
                         val t = TableBlock.blank(); insert(t, "${t.id}@0,0")
                     }
@@ -304,6 +302,8 @@ internal fun FormattingBar(
                         PageMenu(editor.doc.paper) { editor.update(editor.doc.copy(paper = it)); close() }
                     }
                 }
+              }
+              if (focusedBlock != null && focusedBlock !is TextBlock) BlockTools(editor, focusedBlock, label = objectSelected)
                 if (!block) ToolButton(Icons.Filled.KeyboardArrowDown, "Hide formatting", "format-hide") { open = false }
             }
             if (block) {
@@ -324,16 +324,15 @@ internal fun FormattingBar(
           }
           end()
         }
-        if (atTop) blockRow()
       }
     }
 }
 
-/** Tools for the selected table, columns, checklist item or divider. */
+/** Tools for the selected table, columns, checklist item, photo, drawing or divider, shown in the bar. */
 @Composable
-private fun BlockToolsRow(editor: DocEditor, block: Block) {
+private fun BlockTools(editor: DocEditor, block: Block, label: Boolean) {
     val cs = MaterialTheme.colorScheme
-    val (label, icon) = when (block) {
+    val (name, icon) = when (block) {
         is TableBlock -> "Table" to Icons.Filled.TableChart
         is ColumnsBlock -> "Columns" to Icons.Filled.ViewColumn
         is DividerBlock -> "Divider" to Icons.Filled.HorizontalRule
@@ -342,18 +341,14 @@ private fun BlockToolsRow(editor: DocEditor, block: Block) {
         is ImageBlock -> "Photo" to Icons.Filled.Image
         is DrawingBlock -> "Drawing" to Icons.Filled.Brush
     }
-    Row(
-        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Row(
-            Modifier.clip(RoundedCornerShape(50)).background(cs.inverseSurface).padding(horizontal = 10.dp, vertical = 6.dp),
+    run {
+        if (label) Row(
+            Modifier.height(46.dp).clip(RoundedCornerShape(14.dp)).background(cs.inverseSurface).padding(horizontal = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Icon(icon, null, tint = cs.inverseOnSurface, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(6.dp))
-            Text(label, color = cs.inverseOnSurface, style = MaterialTheme.typography.labelLarge)
+            Text(name, color = cs.inverseOnSurface, style = MaterialTheme.typography.labelLarge)
         }
         if (block is TableBlock || block is ColumnsBlock) {
             val current = (block as? TableBlock)?.fill ?: (block as? ColumnsBlock)?.fill
@@ -398,7 +393,7 @@ private fun BlockToolsRow(editor: DocEditor, block: Block) {
             ToolButton(Icons.Filled.ArrowDownward, "Move down", "block-down") { editor.update(editor.doc.move(block.id, 1)) }
         }
         ToolGroup(cs.errorContainer, cs.onErrorContainer) {
-            ToolButton(Icons.Filled.Delete, "Delete $label", "block-delete") {
+            ToolButton(Icons.Filled.Delete, "Delete $name", "block-delete") {
                 editor.update(editor.doc.remove(block.id))
                 editor.focused = null
             }

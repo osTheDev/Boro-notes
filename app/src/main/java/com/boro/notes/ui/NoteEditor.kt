@@ -67,6 +67,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.key.onPreviewKeyEvent
@@ -246,7 +247,16 @@ internal class DocEditor(initial: NoteDoc) {
 
     /** Tapping the blank space under the note: continue typing on the last line. */
     fun focusLast() {
-        doc.blocks.lastOrNull()?.let(::endKey)?.let(::focusEnd)
+        val last = doc.blocks.lastOrNull()
+        if (last is TextBlock || last is CheckBlock) {
+            endKey(last)?.let(::focusEnd)
+            return
+        }
+        // Under a photo, drawing, table or columns: start a fresh line there and open the keyboard.
+        val line = TextBlock(NoteDoc.newId())
+        update(doc.copy(blocks = doc.blocks + line))
+        focused = null
+        pendingFocus = line.id
     }
 
     /**
@@ -402,9 +412,22 @@ private fun PaperTheme(paper: Paper, content: @Composable () -> Unit) {
     }
     val cs = MaterialTheme.colorScheme
     val ink = if (paper.color.dark) Color(0xFFF1EEE8) else Color(0xFF1F1B16)
+    val base = Color(argb)
+    fun shade(a: Float) = ink.copy(alpha = a).compositeOver(base)
     MaterialTheme(
+        // Menus, popups and cards drawn on this paper take its colour too, so their ink stays readable
+        // (in dark mode they used to be dark panels with the paper's dark ink on them).
         colorScheme = cs.copy(
-            surface = Color(argb),
+            surface = base,
+            background = base,
+            surfaceBright = base,
+            surfaceDim = shade(0.08f),
+            surfaceContainerLowest = base,
+            surfaceContainerLow = shade(0.03f),
+            surfaceContainer = shade(0.05f),
+            surfaceContainerHighest = shade(0.12f),
+            surfaceVariant = shade(0.08f),
+            onBackground = ink,
             onSurface = ink,
             onSurfaceVariant = ink.copy(alpha = 0.6f),
             outline = ink.copy(alpha = 0.45f),
@@ -463,6 +486,9 @@ private fun Modifier.paperLines(paper: Paper, lineHeight: Dp, pitch: Float?, top
 @Composable
 private fun Modifier.trackFocus(editor: DocEditor, key: String): Modifier {
     val requester = remember { FocusRequester() }
+    // Ask for the keyboard whenever a line takes focus: after the photo picker (another screen)
+    // the window can come back without it, so a tap focused the line but no keyboard opened.
+    val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
     LaunchedEffect(editor.pendingFocus) {
         if (editor.pendingFocus == key) {
             runCatching { requester.requestFocus() }
@@ -471,7 +497,12 @@ private fun Modifier.trackFocus(editor: DocEditor, key: String): Modifier {
     }
     return this
         .focusRequester(requester)
-        .onFocusChanged { if (it.isFocused) editor.focused = key }
+        .onFocusChanged {
+            if (it.isFocused) {
+                editor.focused = key
+                if (!editor.readOnly) keyboard?.show()
+            }
+        }
 }
 
 @Composable

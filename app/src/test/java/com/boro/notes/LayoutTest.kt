@@ -113,7 +113,13 @@ class RichNoteLayoutTest {
         rule.onNodeWithTag("insert-table").performScrollTo().performClick()
         rule.waitForIdle()
         rule.onNodeWithTag(TAG_NOTE_TABLE).assertExists()
+        // In a table the bar shows the table's tools, not the insert tools.
+        rule.onNodeWithTag("table-add-row").assertExists()
+        rule.onNodeWithTag("insert-table").assertDoesNotExist()
 
+        // Tapping under the table goes back to writing, with insert tools again.
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_NOTE_BLANK).performScrollTo().performClick()
+        rule.waitForIdle()
         rule.onNodeWithTag("insert-columns").performScrollTo().performClick()
         rule.waitForIdle()
         rule.onNodeWithTag(TAG_NOTE_COLUMNS).assertExists()
