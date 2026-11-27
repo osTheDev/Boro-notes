@@ -228,6 +228,9 @@ private fun NewBook(modifier: Modifier, onClick: () -> Unit) {
     Box(
         modifier
             .aspectRatio(0.72f)
+            // Clickable outside the clip: hit tests on uneven rounded corners need Path ops.
+            .clickable(onClick = onClick)
+            .testTag(TAG_NEW_JOURNAL)
             .clip(RoundedCornerShape(topEnd = 14.dp, bottomEnd = 14.dp, topStart = 4.dp, bottomStart = 4.dp))
             .background(cs.surfaceContainerLow)
             .drawBehind {
@@ -239,9 +242,7 @@ private fun NewBook(modifier: Modifier, onClick: () -> Unit) {
                     cornerRadius = CornerRadius(10.dp.toPx()),
                     style = Stroke(1.6.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(9.dp.toPx(), 6.dp.toPx()))),
                 )
-            }
-            .clickable(onClick = onClick)
-            .testTag(TAG_NEW_JOURNAL),
+            },
         contentAlignment = Alignment.Center,
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
