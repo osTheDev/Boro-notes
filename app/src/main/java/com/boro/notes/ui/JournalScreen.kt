@@ -50,6 +50,9 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.launch
 import kotlin.math.abs
+import androidx.compose.ui.input.pointer.util.VelocityTracker
+import androidx.compose.runtime.rememberUpdatedState
+import kotlinx.coroutines.delay
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoStories
@@ -581,19 +584,29 @@ private fun BookSpread(vm: JournalViewModel, book: Journal, pages: List<JournalP
             turn.animateTo(0f, spring(dampingRatio = Spring.DampingRatioMediumBouncy))
         }
     }
+    // A short message in the strip by the camera, e.g. why a page won't turn.
+    var hint by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(hint) { if (hint != null) { delay(2200); hint = null } }
     fun forward() {
         when {
             newer != null -> { flipDir = 1; showContents = false; vm.openPage(newer.id) }
             canStartToday -> { flipDir = 1; showContents = false; vm.newPageToday() }
             // Past the last page: a fresh blank page, like turning to an empty one. Left blank, it's dropped.
-            page != null && page.body.isNotBlank() -> { flipDir = 1; showContents = false; vm.newPage() }
-            else -> nudge(1)
+            page != null && (page.body.isNotBlank() || page.title.isNotBlank()) -> { flipDir = 1; showContents = false; vm.newPage() }
+            else -> { nudge(1); hint = "Write on this page to turn to a new one" }
         }
     }
     fun back() {
-        if (older != null) { flipDir = -1; showContents = false; vm.openPage(older.id) } else nudge(-1)
+        if (older != null) { flipDir = -1; showContents = false; vm.openPage(older.id) }
+        else { nudge(-1); hint = "This is the first page" }
     }
-    val swipeDistance = with(androidx.compose.ui.platform.LocalDensity.current) { 90.dp.toPx() }
+    // The gesture below lives across recompositions; always call the latest versions.
+    val onForward by rememberUpdatedState(::forward)
+    val onBack2 by rememberUpdatedState(::back)
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    // A short drag (about a finger's width) or a quick flick turns the page.
+    val swipeDistance = with(density) { 48.dp.toPx() }
+    val flickSpeed = with(density) { 600.dp.toPx() }
 
     Column(
         Modifier
@@ -605,7 +618,7 @@ private fun BookSpread(vm: JournalViewModel, book: Journal, pages: List<JournalP
         // The strip by the camera, otherwise dead space: what day, how much, where in the book.
         Box(Modifier.fillMaxWidth().windowInsetsTopHeight(WindowInsets.statusBars), contentAlignment = Alignment.Center) {
             Text(
-                listOfNotNull(
+                hint ?: listOfNotNull(
                     vm.dayOfOpenPage()?.format(DateTimeFormatter.ofPattern("EEE, MMM d")),
                     if (page != null) (if (words == 1) "1 word" else "$words words") else null,
                     if (index >= 0) "page ${pages.size - index} of ${pages.size}" else null,
@@ -622,24 +635,37 @@ private fun BookSpread(vm: JournalViewModel, book: Journal, pages: List<JournalP
                 // A sideways swipe anywhere on the pages flips them; up and down still scrolls a page.
                 // Watched on the way down (Initial pass), before the text on the page can claim the
                 // drag for selecting; a clearly sideways drag is then taken for the flip.
-                .pointerInput(older?.id, newer?.id, page?.id) {
+                .pointerInput(Unit) {
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                        val velocity = VelocityTracker()
+                        velocity.addPosition(down.uptimeMillis, down.position)
                         var dx = 0f
                         var dy = 0f
                         var flipping = false
+                        val pageWidth = (size.width / 2f).coerceAtLeast(1f)
                         while (true) {
                             val event = awaitPointerEvent(PointerEventPass.Initial)
                             val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                            velocity.addPosition(change.uptimeMillis, change.position)
                             if (!change.pressed) break
                             val delta = change.position - change.previousPosition
                             dx += delta.x
                             dy += delta.y
-                            if (!flipping && abs(dx) > viewConfiguration.touchSlop * 2 && abs(dx) > abs(dy) * 1.5f) flipping = true
-                            if (flipping) change.consume()
+                            if (!flipping && abs(dx) > viewConfiguration.touchSlop && abs(dx) > abs(dy)) flipping = true
+                            if (flipping) {
+                                change.consume()
+                                // The page leans with the finger while dragging.
+                                scope.launch { turn.snapTo((-dx / pageWidth * 70f).coerceIn(-70f, 70f)) }
+                            }
                         }
                         if (flipping) {
-                            if (dx < -swipeDistance) forward() else if (dx > swipeDistance) back() else nudge(if (dx < 0) 1 else -1)
+                            val vx = velocity.calculateVelocity().x
+                            when {
+                                dx < -swipeDistance || vx < -flickSpeed -> onForward()
+                                dx > swipeDistance || vx > flickSpeed -> onBack2()
+                                else -> scope.launch { turn.animateTo(0f, spring(dampingRatio = Spring.DampingRatioMediumBouncy)) }
+                            }
                         }
                     }
                 },
