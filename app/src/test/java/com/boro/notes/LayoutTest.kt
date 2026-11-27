@@ -228,7 +228,7 @@ class CoverDesignsLayoutTest {
         val notes = FakeNoteRepository()
         val notesVm = NotesViewModel(notes, SavedStateHandle())
         val designsVm = com.boro.notes.ui.DesignsViewModel(FakeDesignRepository(), notes, SavedStateHandle())
-        rule.setContent { com.boro.notes.ui.BoroRoot(notesVm, designsVm) }
+        rule.setContent { com.boro.notes.ui.BoroRoot(notesVm, designsVm, com.boro.notes.ui.TasksViewModel(FakeTaskRepository())) }
 
         rule.onNodeWithTag("navDesigns").performClick()
         rule.waitForIdle()
@@ -260,7 +260,7 @@ class InnerDesignsLayoutTest {
             notes,
             SavedStateHandle(),
         )
-        rule.setContent { com.boro.notes.ui.BoroRoot(notesVm, designsVm) }
+        rule.setContent { com.boro.notes.ui.BoroRoot(notesVm, designsVm, com.boro.notes.ui.TasksViewModel(FakeTaskRepository())) }
 
         rule.onNodeWithTag("navDesigns").performClick()
         rule.waitForIdle()
@@ -296,8 +296,12 @@ class InnerNotesFullScreenTest {
         val notes = FakeNoteRepository(listOf(Note(id = 1, title = "Tee"), Note(id = 2, title = "Coat")))
         val notesVm = NotesViewModel(notes, SavedStateHandle())
         val designsVm = com.boro.notes.ui.DesignsViewModel(FakeDesignRepository(), notes, SavedStateHandle())
-        rule.setContent { com.boro.notes.ui.BoroRoot(notesVm, designsVm) }
+        rule.setContent { com.boro.notes.ui.BoroRoot(notesVm, designsVm, com.boro.notes.ui.TasksViewModel(FakeTaskRepository())) }
 
+        // The app opens on Home; the Notes tile goes to the notes list.
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_HOME).assertIsDisplayed()
+        rule.onNodeWithTag("tile-notes").performClick()
+        rule.waitForIdle()
         rule.onNodeWithTag("${TAG_NOTE_PREFIX}1").performClick()
         rule.waitForIdle()
         rule.onNodeWithTag(TAG_EDITOR_PANE).assertIsDisplayed()
@@ -315,5 +319,33 @@ class InnerNotesFullScreenTest {
         rule.waitForIdle()
         rule.onNodeWithTag("navNotes").assertIsDisplayed()
         rule.onNodeWithTag(TAG_LIST_PANE).assertIsDisplayed()
+    }
+}
+
+/** Tasks on the cover screen: add a punch card, punch today, add a to-do. */
+@RunWith(AndroidJUnit4::class)
+@Config(sdk = [34], qualifiers = "w360dp-h780dp")
+class TasksLayoutTest {
+    @get:Rule val rule = createComposeRule()
+
+    @Test
+    fun punchCardAndTodo() {
+        val repo = FakeTaskRepository()
+        val vm = com.boro.notes.ui.TasksViewModel(repo) { java.time.LocalDate.of(2026, 11, 26) }
+        rule.setContent { com.boro.notes.ui.TasksScreen(vm, wide = false) }
+
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_ADD_HABIT).performScrollTo().performClick()
+        rule.onNodeWithTag("habit-name").performTextReplacement("Stretch")
+        rule.onNodeWithTag("habit-save").performClick()
+        rule.waitForIdle()
+        val id = vm.habits.value.single().habit.id
+        rule.onNodeWithTag("punch-$id-3").performScrollTo().performClick()
+        rule.waitForIdle()
+        assertEquals(1, vm.habits.value.single().count)
+
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_TODO_INPUT).performScrollTo().performTextReplacement("Wash indigo")
+        rule.onNodeWithTag("todo-add").performClick()
+        rule.waitForIdle()
+        assertEquals(listOf("Wash indigo"), vm.todos.value.map { it.text })
     }
 }

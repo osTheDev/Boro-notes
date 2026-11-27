@@ -75,4 +75,43 @@ class MigrationTest {
             database.close()
         }
     }
+
+    @Test
+    fun version3UpgradeAddsEmptyTasks() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val name = "migration-test-v3.db"
+        context.deleteDatabase(name)
+        val file = context.getDatabasePath(name).apply { parentFile?.mkdirs() }
+
+        SQLiteDatabase.openOrCreateDatabase(file, null).use { db ->
+            db.execSQL(
+                "CREATE TABLE IF NOT EXISTS `notes` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                    "`title` TEXT NOT NULL, `body` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, `content` TEXT)"
+            )
+            db.execSQL(
+                "CREATE TABLE IF NOT EXISTS `designs` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                    "`name` TEXT NOT NULL, `stage` TEXT NOT NULL, `noteId` INTEGER, `shapes` TEXT NOT NULL, " +
+                    "`createdAt` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL)"
+            )
+            db.execSQL("INSERT INTO notes (title, body, createdAt, updatedAt, content) VALUES ('Rich', 'text', 1, 1, '{\"blocks\":[]}')")
+            db.version = 3
+        }
+
+        val database = NoteDatabase.create(context, name)
+        try {
+            val note = database.noteDao().observe("").first().single()
+            assertEquals("Rich", note.title)
+            assertEquals("{\"blocks\":[]}", note.content)
+            val tasks = database.taskDao()
+            assertEquals(0, tasks.observeHabits().first().size)
+            val id = tasks.insertHabit(com.boro.notes.data.Habit(name = "Stretch"))
+            tasks.insertCheck(com.boro.notes.data.HabitCheck(id, 20_000))
+            tasks.insertCheck(com.boro.notes.data.HabitCheck(id, 20_000))
+            assertEquals(1, tasks.observeChecks(19_999, 20_001).first().size)
+            tasks.deleteHabit(id)
+            assertEquals(0, tasks.observeChecks(0, 99_999).first().size)
+        } finally {
+            database.close()
+        }
+    }
 }
