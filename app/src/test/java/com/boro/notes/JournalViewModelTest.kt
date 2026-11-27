@@ -71,6 +71,24 @@ class JournalViewModelTest {
         assertEquals(1, vm.pages.value.size)
     }
 
+    @Test fun newPageTurnsToAFreshPageAndBlankOnesAreDropped() = runTest(dispatcher) {
+        vm.createJournal("Days", 0, 0)
+        advanceUntilIdle()
+        vm.newPageToday()
+        advanceUntilIdle()
+        val first = vm.page.value!!.id
+        vm.onDocChange("{}", "written")
+        vm.newPage()
+        advanceUntilIdle()
+        val second = vm.page.value!!.id
+        assertTrue(second != first)
+        assertEquals(2, repo.pages.value.size)
+        // Flipping back from the blank page drops it.
+        vm.openPage(first)
+        advanceUntilIdle()
+        assertEquals(listOf(first), repo.pages.value.map { it.id })
+    }
+
     @Test fun blankPageIsDroppedWhenLeft() = runTest(dispatcher) {
         vm.createJournal("Days", 0, 0)
         advanceUntilIdle()

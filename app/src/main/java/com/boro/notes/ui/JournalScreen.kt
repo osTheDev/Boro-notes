@@ -44,7 +44,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.automirrored.filled.List
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
+import kotlin.math.abs
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoStories
@@ -568,14 +573,25 @@ private fun BookSpread(vm: JournalViewModel, book: Journal, pages: List<JournalP
             flipDir = 0
         }
     }
+    val scope = rememberCoroutineScope()
+    // A short wiggle of the page when there's nowhere to flip to.
+    fun nudge(dir: Int) {
+        scope.launch {
+            turn.animateTo(dir * 12f, tween(120))
+            turn.animateTo(0f, spring(dampingRatio = Spring.DampingRatioMediumBouncy))
+        }
+    }
     fun forward() {
         when {
             newer != null -> { flipDir = 1; showContents = false; vm.openPage(newer.id) }
             canStartToday -> { flipDir = 1; showContents = false; vm.newPageToday() }
+            // Past the last page: a fresh blank page, like turning to an empty one. Left blank, it's dropped.
+            page != null && page.body.isNotBlank() -> { flipDir = 1; showContents = false; vm.newPage() }
+            else -> nudge(1)
         }
     }
     fun back() {
-        if (older != null) { flipDir = -1; showContents = false; vm.openPage(older.id) }
+        if (older != null) { flipDir = -1; showContents = false; vm.openPage(older.id) } else nudge(-1)
     }
     val swipeDistance = with(androidx.compose.ui.platform.LocalDensity.current) { 90.dp.toPx() }
 
@@ -604,14 +620,28 @@ private fun BookSpread(vm: JournalViewModel, book: Journal, pages: List<JournalP
                 .fillMaxSize()
                 .padding(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 12.dp)
                 // A sideways swipe anywhere on the pages flips them; up and down still scrolls a page.
-                .pointerInput(older?.id, newer?.id, canStartToday) {
-                    var total = 0f
-                    detectHorizontalDragGestures(
-                        onDragStart = { total = 0f },
-                        onDragEnd = {
-                            if (total < -swipeDistance) forward() else if (total > swipeDistance) back()
-                        },
-                    ) { _, dx -> total += dx }
+                // Watched on the way down (Initial pass), before the text on the page can claim the
+                // drag for selecting; a clearly sideways drag is then taken for the flip.
+                .pointerInput(older?.id, newer?.id, page?.id) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                        var dx = 0f
+                        var dy = 0f
+                        var flipping = false
+                        while (true) {
+                            val event = awaitPointerEvent(PointerEventPass.Initial)
+                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                            if (!change.pressed) break
+                            val delta = change.position - change.previousPosition
+                            dx += delta.x
+                            dy += delta.y
+                            if (!flipping && abs(dx) > viewConfiguration.touchSlop * 2 && abs(dx) > abs(dy) * 1.5f) flipping = true
+                            if (flipping) change.consume()
+                        }
+                        if (flipping) {
+                            if (dx < -swipeDistance) forward() else if (dx > swipeDistance) back() else nudge(if (dx < 0) 1 else -1)
+                        }
+                    }
                 },
         ) {
             // Left page: the page before (read only), or the contents.

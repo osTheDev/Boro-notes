@@ -135,6 +135,13 @@ class JournalViewModel(
         }
     }
 
+    /** A fresh page dated today, even if today already has one (turning to a blank page). */
+    fun newPage() {
+        val journal = _openId.value ?: return
+        leavePage()
+        viewModelScope.launch { startPage(journal, today().toEpochDay()) }
+    }
+
     private suspend fun startPage(journal: Long, day: Long) {
         val id = repo.createPage(journal, day)
         pageDay = day
