@@ -483,7 +483,7 @@ private fun OpenBook(vm: JournalViewModel, book: Journal, wide: Boolean, onBack:
     LaunchedEffect(book.id, wide && bookView) { if (!(wide && bookView)) vm.openFirstPage() }
     // The cover swings open the first time the book is shown open.
     val swing = remember(book.id) { Animatable(0f) }
-    LaunchedEffect(book.id) { swing.animateTo(1f, tween(if (wide && bookView) 1100 else 900, easing = FastOutSlowInEasing)) }
+    LaunchedEffect(book.id) { swing.animateTo(1f, tween(900, easing = FastOutSlowInEasing)) }
     var listOpen by rememberSaveable(book.id) { mutableStateOf(false) }
 
     Box(Modifier.fillMaxSize().testTag(TAG_OPEN_BOOK)) {
@@ -528,42 +528,8 @@ private fun OpenBook(vm: JournalViewModel, book: Journal, wide: Boolean, onBack:
                 },
             )
         }
-        if (swing.value < 1f && wide && bookView) {
-            // Book view: the front cover lies over the right-hand page, hinged on the spine, and
-            // swings over to the left like opening a real book, showing the spread underneath.
-            val angle = 180f * swing.value
-            val cloth = coverColor(book.color)
-            Row(Modifier.fillMaxSize()) {
-                Spacer(Modifier.weight(1f))
-                Box(
-                    Modifier
-                        .weight(1f)
-                        .fillMaxHeight()
-                        .graphicsLayer {
-                            transformOrigin = TransformOrigin(0f, 0.5f)
-                            rotationY = -angle
-                            cameraDistance = 24f * density
-                            alpha = if (angle > 140f) (180f - angle) / 40f else 1f
-                        }
-                        .background(if (angle <= 90f) cloth else lerp(cloth, Color.Black, 0.25f))
-                        .drawBehind {
-                            if (angle <= 90f) drawHomePattern(COVER_PATTERNS[book.pattern.mod(COVER_PATTERNS.size)], Color.White.copy(alpha = 0.16f), 26.dp.toPx())
-                        },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    if (angle <= 90f) {
-                        Text(
-                            book.title.ifBlank { "Journal" },
-                            style = MaterialTheme.typography.headlineMedium,
-                            fontFamily = FontFamily.Serif,
-                            color = Color.White,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.padding(32.dp),
-                        )
-                    }
-                }
-            }
-        } else if (swing.value < 1f) {
+        // Book view opens straight onto the spread; the swinging cover is for the other layouts.
+        if (swing.value < 1f && !(wide && bookView)) {
             // The front cover, hinged on the left, turning away to show the pages.
             BookCover(
                 book.title, book.color, book.pattern,
@@ -864,7 +830,7 @@ private fun androidx.compose.foundation.layout.BoxScope.SpreadToolbar(editor: Do
                 shadowElevation = 6.dp,
                 tonalElevation = 2.dp,
                 modifier = Modifier.fillMaxWidth().testTag(TAG_SPREAD_TOOLBAR),
-            ) { FormattingBar(ed, atTop = true) }
+            ) { FormattingBar(ed, atTop = true, block = true) }
         }
     }
 }
