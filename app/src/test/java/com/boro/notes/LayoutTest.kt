@@ -16,6 +16,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.printToString
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextReplacement
@@ -391,8 +392,13 @@ class CoverJournalLayoutTest {
         rule.waitForIdle()
         rule.onNodeWithTag(com.boro.notes.ui.TAG_NEW_JOURNAL).performScrollTo().performClick()
         rule.waitForIdle()
-        val found = rule.onAllNodesWithTag(com.boro.notes.ui.TAG_COVER_TITLE).fetchSemanticsNodes().isNotEmpty()
-        assertTrue("Cover editor missing:\n" + rule.onRoot().printToString(), found)
+        val byTouch = rule.onAllNodesWithTag(com.boro.notes.ui.TAG_COVER_TITLE).fetchSemanticsNodes().isNotEmpty()
+        if (!byTouch) {
+            rule.onNodeWithTag(com.boro.notes.ui.TAG_NEW_JOURNAL).performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick)
+            rule.waitForIdle()
+        }
+        val byAction = rule.onAllNodesWithTag(com.boro.notes.ui.TAG_COVER_TITLE).fetchSemanticsNodes().isNotEmpty()
+        assertTrue("Cover editor missing (touch=$byTouch, action=$byAction):\n" + rule.onRoot().printToString(), byTouch)
         rule.onNodeWithTag(com.boro.notes.ui.TAG_COVER_TITLE).performTextReplacement("Field guide")
         rule.onNodeWithTag("cover-colour-2").performScrollTo().performClick()
         rule.onNodeWithTag(com.boro.notes.ui.TAG_COVER_SAVE).performScrollTo().performClick()
