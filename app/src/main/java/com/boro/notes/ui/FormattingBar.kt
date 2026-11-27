@@ -292,8 +292,10 @@ internal fun FormattingBar(
                         runCatching { pickPhoto.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
                     }
                     ToolButton(Icons.Filled.Draw, "Insert drawing", "insert-drawing") {
+                        // Draw in the paint overlay first; the drawing goes into the note when confirmed.
+                        focusManager.clearFocus()
                         editor.eraser = false
-                        insert(DrawingBlock(NoteDoc.newId()))
+                        editor.sketching = DrawingBlock(NoteDoc.newId(), pattern = 1)
                     }
                 }
                 // Page look.
@@ -404,48 +406,15 @@ private fun BlockToolsRow(editor: DocEditor, block: Block) {
     }
 }
 
-/** Pen colour wheel, pen size, eraser, undo, pad height and Done for the drawing being drawn on. */
+/** A placed drawing is locked: it only changes in the paint overlay. */
 @Composable
 private fun DrawingTools(editor: DocEditor, block: DrawingBlock) {
     val cs = MaterialTheme.colorScheme
-    val d = { editor.latest(block) }
-    ToolGroup(cs.primaryContainer, cs.onPrimaryContainer) {
-        ToolMenu(Icons.Filled.Brush, "Pen colour", "ink-colour", accent = Color(editor.inkColor)) { close ->
-            MenuLabel("Ink")
-            SwatchGrid(INK_COLORS.mapIndexed { i, c -> Swatch("Ink ${i + 1}", Color(c), "ink-$i", editor.inkColor == c && !editor.eraser) }) { s ->
-                editor.inkColor = INK_COLORS[s.tag.removePrefix("ink-").toInt()]
-                editor.eraser = false
-                close()
-            }
-        }
-        ToolMenu(Icons.Filled.LineWeight, "Pen size", "ink-size") { close ->
-            MenuLabel("Pen size")
-            listOf("Fine" to 2f, "Medium" to 4f, "Bold" to 7f, "Marker" to 12f).forEach { (name, w) ->
-                DropdownMenuItem(
-                    text = { Text(name) },
-                    leadingIcon = { Box(Modifier.size(28.dp), contentAlignment = Alignment.Center) { Box(Modifier.size(w.dp + 2.dp).background(Color(editor.inkColor), CircleShape)) } },
-                    trailingIcon = { if (editor.inkWidth == w) Icon(Icons.Filled.Check, null) },
-                    onClick = { editor.inkWidth = w; editor.eraser = false; close() },
-                    modifier = Modifier.testTag("ink-size-${name.lowercase()}"),
-                )
-            }
-        }
-        ToolButton(Icons.Filled.AutoFixNormal, "Eraser", "ink-eraser", selected = editor.eraser) { editor.eraser = !editor.eraser }
-        ToolButton(Icons.AutoMirrored.Filled.Undo, "Undo stroke", "ink-undo", enabled = block.strokes.isNotEmpty()) {
-            val cur = d()
-            if (cur.strokes.isNotEmpty()) editor.update(editor.doc.replace(cur.copy(strokes = cur.strokes.dropLast(1))))
-        }
-    }
-    ToolGroup(cs.secondaryContainer, cs.onSecondaryContainer) {
-        ToolButton(Icons.Filled.UnfoldMore, "Taller", "drawing-taller") {
-            editor.update(editor.doc.replace(d().copy(height = (d().height + 80).coerceAtMost(1200))))
-        }
-        ToolButton(Icons.Filled.UnfoldLess, "Shorter", "drawing-shorter") {
-            editor.update(editor.doc.replace(d().copy(height = (d().height - 80).coerceAtLeast(120))))
-        }
-    }
     ToolGroup(cs.primary, cs.onPrimary) {
-        LabeledTool(Icons.Filled.Check, "Done", "drawing-done") { editor.focused = null; editor.eraser = false }
+        LabeledTool(Icons.Filled.Brush, "Edit drawing", "drawing-edit") {
+            editor.eraser = false
+            editor.sketching = editor.latest(block)
+        }
     }
 }
 
@@ -533,10 +502,10 @@ private fun PatternPreview(pattern: PaperPattern, selected: Boolean, modifier: M
 
 /** Colour choices open as a spiralling paint wheel (see [PaletteWheel]). */
 @Composable
-private fun SwatchGrid(swatches: List<Swatch>, onPick: (Swatch) -> Unit) = PaletteWheel(swatches, onPick)
+internal fun SwatchGrid(swatches: List<Swatch>, onPick: (Swatch) -> Unit) = PaletteWheel(swatches, onPick)
 
 @Composable
-private fun MenuLabel(text: String) {
+internal fun MenuLabel(text: String) {
     Text(
         text,
         style = MaterialTheme.typography.labelMedium,
@@ -547,7 +516,7 @@ private fun MenuLabel(text: String) {
 
 /** A rounded tinted group of tools, so related tools read as one at a glance. */
 @Composable
-private fun ToolGroup(container: Color, content: Color, tools: @Composable () -> Unit) {
+internal fun ToolGroup(container: Color, content: Color, tools: @Composable () -> Unit) {
     Row(
         Modifier.clip(RoundedCornerShape(14.dp)).background(container).padding(2.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -558,7 +527,7 @@ private fun ToolGroup(container: Color, content: Color, tools: @Composable () ->
 
 /** An icon tool. [selected] shows it's on (e.g. bold); [accent] draws a colour bar under it. */
 @Composable
-private fun ToolButton(
+internal fun ToolButton(
     icon: ImageVector,
     description: String,
     tag: String,
@@ -594,7 +563,7 @@ private fun ToolButton(
 
 /** A small tool with an icon and a word, for actions an icon alone can't say (add row vs column). */
 @Composable
-private fun LabeledTool(icon: ImageVector, label: String, tag: String, onClick: () -> Unit) {
+internal fun LabeledTool(icon: ImageVector, label: String, tag: String, onClick: () -> Unit) {
     Row(
         Modifier
             .height(42.dp)
@@ -612,7 +581,7 @@ private fun LabeledTool(icon: ImageVector, label: String, tag: String, onClick: 
 
 /** An icon tool that opens a menu. */
 @Composable
-private fun ToolMenu(
+internal fun ToolMenu(
     icon: ImageVector,
     description: String,
     tag: String,

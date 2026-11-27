@@ -436,12 +436,24 @@ class CoverJournalLayoutTest {
         rule.onNodeWithTag(com.boro.notes.ui.TAG_OPEN_BOOK).assertExists()
         rule.onNodeWithTag(com.boro.notes.ui.TAG_PAGE_TITLE).assertExists()
 
+        // Insert drawing opens the paint overlay; the drawing goes into the page on Insert.
         rule.onNodeWithTag("insert-drawing").performScrollTo().performClick()
         rule.waitForIdle()
-        rule.onNodeWithTag(com.boro.notes.ui.TAG_NOTE_DRAWING).assertExists()
-        rule.onNodeWithTag("drawing-done").performScrollTo().performClick()
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_DRAWING_OVERLAY).assertExists()
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_NOTE_DRAWING).assertDoesNotExist()
+        rule.onNodeWithTag("drawing-insert").performClick()
         rule.waitForIdle()
-        rule.onNodeWithTag("drawing-done").assertDoesNotExist()
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_DRAWING_OVERLAY).assertDoesNotExist()
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_NOTE_DRAWING).assertExists()
+        // Placed drawings are locked; selecting one offers Edit drawing, which reopens the overlay.
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_NOTE_DRAWING).performScrollTo().performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag("drawing-edit").performScrollTo().performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_DRAWING_OVERLAY).assertExists()
+        rule.onNodeWithTag("drawing-cancel").performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_DRAWING_OVERLAY).assertDoesNotExist()
     }
 }
 

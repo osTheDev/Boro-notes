@@ -9,8 +9,6 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -23,7 +21,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -40,7 +37,8 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
-import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -52,7 +50,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.UUID
-import kotlin.math.hypot
 import kotlin.math.max
 
 const val TAG_NOTE_IMAGE = "noteImage"
@@ -122,9 +119,12 @@ internal fun ImageBlockView(editor: DocEditor, block: ImageBlock) {
     }
 }
 
+/** The caption under a photo or drawing. An empty one only shows while its block is selected. */
 @Composable
 private fun Caption(editor: DocEditor, id: String, value: String, onChange: (String) -> Unit) {
     val cs = MaterialTheme.colorScheme
+    var typing by remember { mutableStateOf(false) }
+    if (value.isEmpty() && (editor.readOnly || (editor.focused != id && !typing))) return
     BasicTextField(
         value = value,
         onValueChange = onChange,
@@ -138,96 +138,89 @@ private fun Caption(editor: DocEditor, id: String, value: String, onChange: (Str
                 inner()
             }
         },
-        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+        modifier = Modifier.fillMaxWidth().padding(top = 4.dp).onFocusChanged { typing = it.isFocused },
     )
 }
 
 /**
- * A drawing area. While it's selected, finger strokes draw (or erase) instead of scrolling;
- * tap another block or Done to go back to scrolling.
+ * A placed drawing. It's locked so scrolling over it never draws: tap to select it, then
+ * Edit drawing (or tap it again) opens the paint overlay.
  */
 @Composable
 internal fun DrawingBlockView(editor: DocEditor, block: DrawingBlock) {
     val cs = MaterialTheme.colorScheme
-    val active = editor.focused == block.id
-    // The stroke being drawn right now, in px.
-    val live = remember { mutableStateListOf<Offset>() }
+    val selected = editor.focused == block.id
+    val clear = block.paper == 0L
     Column(Modifier.fillMaxWidth()) {
-        Canvas(
+        InkCanvas(
+            block,
             Modifier
                 .fillMaxWidth()
                 .height(block.height.dp)
                 .clip(RoundedCornerShape(12.dp))
-                .background(cs.surfaceContainerLow)
-                .border(if (active) 3.dp else 1.dp, if (active) cs.primary else cs.outlineVariant, RoundedCornerShape(12.dp))
-                .testTag(TAG_NOTE_DRAWING)
-                .pointerInput(active, block.id, editor.readOnly) {
-                    if (editor.readOnly) return@pointerInput
-                    if (!active) {
-                        awaitEachGesture {
-                            awaitFirstDown()
-                            editor.focused = block.id
-                        }
-                        return@pointerInput
-                    }
-                    awaitEachGesture {
-                        val down = awaitFirstDown()
-                        down.consume()
-                        live.clear()
-                        live.add(down.position)
-                        while (true) {
-                            val event = awaitPointerEvent()
-                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                            if (!change.pressed) break
-                            change.consume()
-                            live.add(change.position)
-                        }
-                        val w = size.width.toFloat().coerceAtLeast(1f)
-                        val pts = live.toList()
-                        live.clear()
-                        val current = editor.latest(block)
-                        if (editor.eraser) {
-                            // Remove any stroke the finger passed over.
-                            val radius = 14.dp.toPx()
-                            val kept = current.strokes.filterNot { s -> s.toPx(w, density).any { p -> pts.any { q -> hypot(p.x - q.x, p.y - q.y) < radius } } }
-                            if (kept.size != current.strokes.size) editor.update(editor.doc.replace(current.copy(strokes = kept)))
-                        } else if (pts.isNotEmpty()) {
-                            val flat = pts.flatMap { listOf(it.x / w, it.y / density) }
-                            val stroke = InkStroke(editor.inkColor, editor.inkWidth, flat)
-                            editor.update(editor.doc.replace(current.copy(strokes = current.strokes + stroke)))
-                        }
-                    }
+                .border(
+                    if (selected) 3.dp else if (clear) 0.dp else 1.dp,
+                    if (selected) cs.primary else if (clear) Color.Transparent else cs.outlineVariant,
+                    RoundedCornerShape(12.dp),
+                )
+                .clickable(enabled = !editor.readOnly) {
+                    if (selected) { editor.eraser = false; editor.sketching = editor.latest(block) } else editor.focused = block.id
                 }
-        ) {
-            val w = size.width
-            block.strokes.forEach { s -> drawInk(s.toPx(w, density), Color(s.color), s.width.dp.toPx()) }
-            if (live.isNotEmpty()) {
-                drawInk(live, if (editor.eraser) cs.error.copy(alpha = 0.4f) else Color(editor.inkColor), (if (editor.eraser) 28f else editor.inkWidth).dp.toPx())
-            }
-            if (block.strokes.isEmpty() && live.isEmpty()) {
-                // Hint dots so the empty area reads as a sketch pad.
-                val step = 24.dp.toPx()
-                var y = step
-                while (y < size.height) {
-                    var x = step
-                    while (x < size.width) { drawCircle(cs.outlineVariant, 1.2f * density, Offset(x, y)); x += step }
-                    y += step
-                }
-            }
-        }
-        if (!active && block.strokes.isEmpty() && !editor.readOnly) {
-            Text(
-                "Tap to draw",
-                style = MaterialTheme.typography.bodySmall,
-                color = cs.onSurfaceVariant,
-                modifier = Modifier.align(Alignment.CenterHorizontally).padding(top = 2.dp),
-            )
-        }
+                .testTag(TAG_NOTE_DRAWING),
+        )
         Caption(editor, block.id, block.caption) { editor.update(editor.doc.replace(editor.latest(block).copy(caption = it))) }
     }
 }
 
-private fun InkStroke.toPx(width: Float, density: Float): List<Offset> =
+/** The canvas colour behind [block]: its own, or a soft card that follows the page. */
+@Composable
+internal fun drawingPaper(block: DrawingBlock): Color = when (val p = block.paper) {
+    null -> MaterialTheme.colorScheme.surfaceContainerLow
+    0L -> Color.Transparent
+    else -> Color(p)
+}
+
+/** Draws a drawing's canvas, guide pattern and strokes, plus [live] (the stroke being drawn, in px). */
+@Composable
+internal fun InkCanvas(
+    block: DrawingBlock,
+    modifier: Modifier,
+    live: List<Offset> = emptyList(),
+    liveColor: Color = Color.Unspecified,
+    liveWidth: Float = 0f,
+) {
+    val bg = drawingPaper(block)
+    val guide = if (block.paper != null && block.paper != 0L && Color(block.paper).luminance() < 0.4f) Color.White.copy(alpha = 0.18f)
+    else MaterialTheme.colorScheme.outlineVariant
+    Canvas(modifier.background(bg)) {
+        val step = 24.dp.toPx()
+        when (block.pattern) {
+            1 -> {
+                var y = step
+                while (y < size.height) {
+                    var x = step
+                    while (x < size.width) { drawCircle(guide, 1.3f * density, Offset(x, y)); x += step }
+                    y += step
+                }
+            }
+            2 -> {
+                var x = step
+                while (x < size.width) { drawLine(guide, Offset(x, 0f), Offset(x, size.height), 1f); x += step }
+                var y = step
+                while (y < size.height) { drawLine(guide, Offset(0f, y), Offset(size.width, y), 1f); y += step }
+            }
+            3 -> {
+                var y = step
+                while (y < size.height) { drawLine(guide, Offset(0f, y), Offset(size.width, y), 1f); y += step }
+            }
+        }
+        val w = size.width
+        block.strokes.forEach { s -> drawInk(s.toPx(w, density), Color(s.color), s.width.dp.toPx()) }
+        if (live.isNotEmpty()) drawInk(live, liveColor, liveWidth.dp.toPx())
+    }
+}
+
+internal fun InkStroke.toPx(width: Float, density: Float): List<Offset> =
     points.chunked(2).mapNotNull { if (it.size == 2) Offset(it[0] * width, it[1] * density) else null }
 
 /** A smooth stroke through [pts] (quadratic curves between midpoints). */

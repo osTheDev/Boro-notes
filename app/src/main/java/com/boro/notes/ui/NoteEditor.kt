@@ -66,6 +66,7 @@ import com.boro.notes.notes.Paper
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.key.onPreviewKeyEvent
@@ -154,6 +155,10 @@ internal class DocEditor(initial: NoteDoc) {
     var inkColor by mutableStateOf(INK_COLORS[0])
     var inkWidth by mutableStateOf(3f)
     var eraser by mutableStateOf(false)
+    /** The drawing open in the paint overlay (new or existing), or null. */
+    var sketching by mutableStateOf<DrawingBlock?>(null)
+    /** Width of the page's writing area in dp, so the overlay canvas matches where the drawing will sit. */
+    var pageWidthDp by mutableStateOf(0f)
     /** Reading only: typing, drawing and selecting blocks are off. */
     var readOnly by mutableStateOf(false)
 
@@ -211,6 +216,15 @@ internal class DocEditor(initial: NoteDoc) {
      * (so its menus show) and the keyboard stays shut; typing into it is one tap away.
      * [keyboard] moves real focus there, for flows that are already typing (checklist Enter).
      */
+    /** Puts a drawing from the overlay into the note: replaces it if it's already there, else inserts it. */
+    fun saveDrawing(d: DrawingBlock) {
+        if (doc.blocks.any { it.id == d.id }) update(doc.replace(d))
+        else update(doc.insertAfter(focusedBlockId, d))
+        focused = null
+        sketching = null
+        eraser = false
+    }
+
     fun insert(block: Block, focusKey: String = block.id, keyboard: Boolean = false) {
         update(doc.insertAfter(focusedBlockId, block))
         if (keyboard) pendingFocus = focusKey else focused = focusKey
@@ -334,12 +348,14 @@ private fun NoteEditorContent(
                     }.getOrNull()
                 }
                 val start = if (paper.margin) 40.dp else 16.dp
+                val editorDensity = LocalDensity.current.density
                 Column(
                     Modifier
                         .fillMaxWidth()
                         .heightIn(min = pageHeight)
                         .paperLines(paper, lineHeight, pitch, top = 8.dp, marginX = if (paper.margin) 30.dp else null)
                         .padding(start = start, end = 16.dp, top = 8.dp, bottom = 8.dp)
+                        .onSizeChanged { editor.pageWidthDp = it.width / editorDensity }
                         .testTag(TAG_NOTE_EDITOR),
                     // On lined paper, text blocks sit flush so they stay on the lines.
                     verticalArrangement = Arrangement.spacedBy(if (lined) 0.dp else 6.dp),
@@ -370,6 +386,9 @@ private fun NoteEditorContent(
           }
         }
         if (!toolbarAtTop && showToolbar) FormattingBar(editor)
+    }
+    editor.sketching?.let { d ->
+        DrawingOverlay(editor, d, onDone = { editor.saveDrawing(it) }, onCancel = { editor.sketching = null; editor.eraser = false })
     }
 }
 

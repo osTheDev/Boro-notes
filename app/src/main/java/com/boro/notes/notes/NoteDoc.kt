@@ -205,6 +205,10 @@ data class DrawingBlock(
     val strokes: List<InkStroke> = emptyList(),
     val height: Int = 280,
     val caption: String = "",
+    /** Canvas colour (ARGB); null = a soft card that follows the page, 0 = clear (sits right on the page). */
+    val paper: Long? = null,
+    /** Canvas guide: 0 none, 1 dots, 2 grid, 3 lines. */
+    val pattern: Int = 0,
 ) : Block
 
 /** One stroke: colour (ARGB), width in dp, and points as x (fraction of width), y (dp) pairs. */
