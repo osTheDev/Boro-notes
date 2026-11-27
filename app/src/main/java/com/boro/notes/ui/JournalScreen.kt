@@ -576,21 +576,12 @@ private fun BookSpread(vm: JournalViewModel, book: Journal, pages: List<JournalP
     val left = order.getOrNull(start)
     val right = order.getOrNull(start + 1)
     fun stateOf(p: JournalPage) = open?.takeIf { it.id == p.id } ?: drafts[p.id] ?: EditorState(p.id, p.title, p.body, p.content)
-    val words = listOfNotNull(left, right).sumOf { p -> stateOf(p).body.split(Regex("\\s+")).count { it.isNotBlank() } }
-    val chapter = order.take(start + 1).lastOrNull { it.chapter != null }?.chapter
+    // Words in the whole book, so turning pages doesn't change it.
+    val words = order.sumOf { p -> stateOf(p).body.split(Regex("\\s+")).count { it.isNotBlank() } }
 
-    // A short message in the strip by the camera, e.g. why a page won't turn.
-    var hint by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(hint) { if (hint != null) { delay(2200); hint = null } }
-    // No turning animation: the pages' text and numbers simply change.
-    fun forward() {
-        if (vm.turnForward()) showContents = false
-        else hint = "Write on these pages to turn to fresh ones"
-    }
-    fun back() {
-        if (vm.turnBack()) showContents = false
-        else hint = "This is the first page"
-    }
+    // No turning animation: the pages' text and numbers simply change. Nowhere to turn: nothing happens.
+    fun forward() { if (vm.turnForward()) showContents = false }
+    fun back() { if (vm.turnBack()) showContents = false }
     // The gesture below lives across recompositions; always call the latest versions.
     val onForward by rememberUpdatedState(::forward)
     val onBack2 by rememberUpdatedState(::back)
@@ -620,19 +611,13 @@ private fun BookSpread(vm: JournalViewModel, book: Journal, pages: List<JournalP
             .drawBehind { drawHomePattern(COVER_PATTERNS[book.pattern.mod(COVER_PATTERNS.size)], Color.White.copy(alpha = 0.12f), 26.dp.toPx()) }
             .testTag(TAG_BOOK_SPREAD),
     ) {
-        // The strip by the camera, otherwise dead space: which book, where in it, how much.
+        // The strip by the camera, otherwise dead space: quiet stats that barely change as pages turn.
         Box(Modifier.fillMaxWidth().windowInsetsTopHeight(WindowInsets.statusBars), contentAlignment = Alignment.Center) {
-            val n = pages.size
             Text(
-                hint ?: listOfNotNull(
+                listOf(
                     book.title.ifBlank { "Journal" },
-                    chapter,
-                    when {
-                        right != null -> "pages ${start + 1}–${start + 2} of $n"
-                        left != null -> "page ${start + 1} of $n"
-                        else -> null
-                    },
-                    if (left != null) (if (words == 1) "1 word" else "$words words") else null,
+                    "pages ${start + 1}–${start + 2}",
+                    if (words == 1) "1 word" else "$words words",
                 ).joinToString("  ·  "),
                 style = MaterialTheme.typography.labelMedium,
                 color = Color.White.copy(alpha = 0.85f),
