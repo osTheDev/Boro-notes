@@ -599,6 +599,13 @@ private fun BookSpread(vm: JournalViewModel, book: Journal, pages: List<JournalP
     LaunchedEffect(start, pages.size, reading) { vm.ensureSpread() }
     val left = order.getOrNull(start)
     val right = order.getOrNull(start + 1)
+    // Opening the book: keep the pages hidden until this book's pages are loaded (and made, for a
+    // fresh spread), then fade them in whole, rather than showing empty paper that fills in.
+    val loadedFor by vm.pagesFor.collectAsStateWithLifecycle()
+    var ready by remember(book.id) { mutableStateOf(false) }
+    if (!ready && loadedFor == book.id && (reading || right != null)) SideEffect { ready = true }
+    LaunchedEffect(book.id) { delay(700); ready = true } // never stay hidden if something's slow
+    val pagesAlpha by androidx.compose.animation.core.animateFloatAsState(if (ready) 1f else 0f, tween(180), label = "pages")
     fun stateOf(p: JournalPage) = open?.takeIf { it.id == p.id } ?: drafts[p.id] ?: vm.pageState(p)
     // Words in the whole book, so turning pages doesn't change it.
     val words = order.sumOf { p -> ((open?.takeIf { it.id == p.id } ?: drafts[p.id])?.body ?: p.body).split(Regex("\\s+")).count { it.isNotBlank() } }
@@ -652,6 +659,7 @@ private fun BookSpread(vm: JournalViewModel, book: Journal, pages: List<JournalP
             Modifier
                 .fillMaxSize()
                 .padding(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 12.dp)
+                .graphicsLayer { alpha = pagesAlpha }
                 // A sideways swipe anywhere on the pages turns them; up and down still scrolls a page.
                 // Watched on the way down (Initial pass), before the text on the page can claim the
                 // drag for selecting; a clearly sideways drag is then taken for the turn.

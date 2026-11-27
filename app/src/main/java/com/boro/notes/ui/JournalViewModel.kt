@@ -23,6 +23,7 @@ import com.boro.notes.notes.PaperPattern
 import com.boro.notes.notes.TextBlock
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
@@ -44,9 +45,18 @@ class JournalViewModel(
     /** The book picked on the shelf (shown closed on the cover screen, open when unfolded). */
     val openId: StateFlow<Long?> = _openId.asStateFlow()
 
-    val pages: StateFlow<List<JournalPage>> = _openId
-        .flatMapLatest { id -> if (id == null) flowOf(emptyList()) else repo.observePages(id) }
+    private val loaded: StateFlow<Pair<Long?, List<JournalPage>>> = _openId
+        .flatMapLatest { id -> if (id == null) flowOf(null to emptyList()) else repo.observePages(id).map { id to it } }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null to emptyList())
+
+    val pages: StateFlow<List<JournalPage>> = loaded
+        .map { it.second }
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    /** Which book [pages] has loaded so far (null before any): lets a just-opened book wait for its own pages. */
+    val pagesFor: StateFlow<Long?> = loaded
+        .map { it.first }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     private val _bookView = MutableStateFlow(true)
     /**

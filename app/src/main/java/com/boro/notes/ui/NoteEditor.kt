@@ -96,6 +96,7 @@ import com.boro.notes.notes.TableBlock
 import com.boro.notes.notes.TextBlock
 import com.boro.notes.notes.TextKind
 import com.mohamedrejeb.richeditor.model.RichTextState
+import androidx.compose.ui.text.rememberTextMeasurer
 import com.mohamedrejeb.richeditor.ui.BasicRichTextEditor
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.debounce
@@ -320,13 +321,24 @@ private fun NoteEditorContent(
                     .testTag(TAG_NOTE_PAPER),
             ) {
                 header()
-                val lineHeight = with(LocalDensity.current) { richTextStyle(TextKind.BODY).lineHeight.toDp() }
+                val bodyStyle = richTextStyle(TextKind.BODY)
+                val lineHeight = with(LocalDensity.current) { bodyStyle.lineHeight.toDp() }
+                // The ruled lines follow the text's real spacing, measured the way the editor lays it
+                // out (one paragraph per line), rather than a worked-out figure that can drift from it.
+                val measurer = rememberTextMeasurer()
+                val pitch = remember(bodyStyle, measurer) {
+                    runCatching {
+                        val sample = RichTextState().apply { setText(List(40) { "Ag" }.joinToString("\n")) }.annotatedString
+                        val r = measurer.measure(sample, bodyStyle)
+                        if (r.lineCount < 2) null else (r.getLineBottom(r.lineCount - 1) - r.getLineTop(0)) / r.lineCount
+                    }.getOrNull()
+                }
                 val start = if (paper.margin) 40.dp else 16.dp
                 Column(
                     Modifier
                         .fillMaxWidth()
                         .heightIn(min = pageHeight)
-                        .paperLines(paper, lineHeight, top = 8.dp, marginX = if (paper.margin) 30.dp else null)
+                        .paperLines(paper, lineHeight, pitch, top = 8.dp, marginX = if (paper.margin) 30.dp else null)
                         .padding(start = start, end = 16.dp, top = 8.dp, bottom = 8.dp)
                         .testTag(TAG_NOTE_EDITOR),
                     // On lined paper, text blocks sit flush so they stay on the lines.
@@ -390,12 +402,12 @@ private fun PaperTheme(paper: Paper, content: @Composable () -> Unit) {
  * ([lineHeight] apart, starting [top] down), so writing sits on them like a notebook.
  */
 @Composable
-private fun Modifier.paperLines(paper: Paper, lineHeight: Dp, top: Dp, marginX: Dp?): Modifier {
+private fun Modifier.paperLines(paper: Paper, lineHeight: Dp, pitch: Float?, top: Dp, marginX: Dp?): Modifier {
     val ink = MaterialTheme.colorScheme.onSurface
     val marginColor = Color(0xFFE57373)
     return drawBehind {
-        // Whole pixels, like the text's own lines (see onWholePixels), so the two never drift apart.
-        val step = kotlin.math.ceil(lineHeight.toPx())
+        // The measured spacing of the text's lines; else whole pixels, as text rounds its lines.
+        val step = pitch?.takeIf { it > 0f } ?: kotlin.math.ceil(lineHeight.toPx())
         val y0 = top.toPx()
         val thin = 1.dp.toPx()
         val line = ink.copy(alpha = 0.14f)
