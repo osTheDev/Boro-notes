@@ -1,6 +1,11 @@
 package com.boro.notes.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutLinearInEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -89,6 +94,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -135,6 +142,7 @@ const val TAG_COVER_TITLE = "coverTitle"
 const val TAG_COVER_SAVE = "coverSave"
 const val TAG_BOOK_VIEW = "bookView"
 const val TAG_CONTENTS = "spreadContents"
+const val TAG_SPREAD_TOOLBAR = "spreadToolbar"
 const val TAG_NEW_CHAPTER = "newChapter"
 const val TAG_CHAPTER_NAME = "chapterName"
 const val TAG_CHAPTER_SAVE = "chapterSave"
@@ -566,6 +574,11 @@ private fun BookSpread(vm: JournalViewModel, book: Journal, pages: List<JournalP
     val open by vm.page.collectAsStateWithLifecycle()
     var showContents by rememberSaveable { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf<JournalPage?>(null) }
+    // One formatting bar for the spread: it drops down over the page you're not writing on.
+    val editors = remember { mutableStateMapOf<String, DocEditor>() }
+    var activeSide by remember { mutableStateOf("left") }
+    val focusedSide = listOf("left", "right").firstOrNull { editors[it]?.focused != null }
+    if (focusedSide != null && focusedSide != activeSide) SideEffect { activeSide = focusedSide }
     var chapterEdit by remember { mutableStateOf<ChapterEdit?>(null) }
     BackHandler(enabled = showContents) { showContents = false }
 
@@ -672,7 +685,8 @@ private fun BookSpread(vm: JournalViewModel, book: Journal, pages: List<JournalP
                     )
                 } else {
                     SpreadPage(
-                        vm, left, if (left != null) stateOf(left) else null, "left", ink, formatPinned, reading,
+                        vm, left, if (left != null) stateOf(left) else null, "left", ink, reading,
+                        onEditor = { editors["left"] = it },
                         onDelete = { confirmDelete = it },
                         leading = {
                             IconButton(onClick = onBack, modifier = Modifier.testTag("journal-back-spread")) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Close the book", tint = ink) }
@@ -684,6 +698,7 @@ private fun BookSpread(vm: JournalViewModel, book: Journal, pages: List<JournalP
                         },
                     )
                 }
+                SpreadToolbar(editors["right"].takeIf { right != null }, visible = formatPinned && !reading && activeSide == "right")
             }
             // The spine: a darker band of cloth with a running stitch down it.
             Box(
@@ -702,7 +717,8 @@ private fun BookSpread(vm: JournalViewModel, book: Journal, pages: List<JournalP
             // Right page.
             Box(Modifier.weight(1f).fillMaxHeight().clip(pageShape).background(paperColor).testTag(TAG_RIGHT_PAGE)) {
                 SpreadPage(
-                    vm, right, if (right != null) stateOf(right) else null, "right", ink, formatPinned, reading,
+                    vm, right, if (right != null) stateOf(right) else null, "right", ink, reading,
+                    onEditor = { editors["right"] = it },
                     onDelete = { confirmDelete = it },
                     leading = {},
                     trailing = {
@@ -711,6 +727,7 @@ private fun BookSpread(vm: JournalViewModel, book: Journal, pages: List<JournalP
                         IconButton(onClick = { vm.setBookView(false) }, modifier = Modifier.testTag(TAG_BOOK_VIEW)) { Icon(Icons.Filled.CloseFullscreen, "Leave book view", tint = ink) }
                     },
                 )
+                SpreadToolbar(editors["left"].takeIf { left != null && !showContents }, visible = formatPinned && !reading && activeSide == "left")
             }
         }
     }
@@ -724,8 +741,8 @@ private fun SpreadPage(
     state: EditorState?,
     side: String,
     ink: Color,
-    formatPinned: Boolean,
     reading: Boolean,
+    onEditor: (DocEditor) -> Unit,
     onDelete: (JournalPage) -> Unit,
     leading: @Composable () -> Unit,
     trailing: @Composable () -> Unit,
@@ -764,8 +781,9 @@ private fun SpreadPage(
                     wide = true,
                     modifier = Modifier.fillMaxSize(),
                     toolbarAtTop = true,
-                    showToolbar = formatPinned,
+                    showToolbar = false,
                     readOnly = reading,
+                    onEditor = onEditor,
                     header = {
                         TextField(
                             value = state.title,
@@ -787,6 +805,32 @@ private fun SpreadPage(
             }
         }
     }
+    }
+}
+
+/**
+ * The book view's one formatting bar, for [editor] (the page being written), dropping down from
+ * under the header of the facing page so it never covers the words being typed.
+ */
+@Composable
+private fun androidx.compose.foundation.layout.BoxScope.SpreadToolbar(editor: DocEditor?, visible: Boolean) {
+    AnimatedVisibility(
+        visible = visible && editor != null,
+        modifier = Modifier.align(Alignment.TopCenter).padding(start = 8.dp, end = 8.dp, top = 52.dp),
+        enter = expandVertically(expandFrom = Alignment.Top) + fadeIn(),
+        exit = shrinkVertically(shrinkTowards = Alignment.Top) + fadeOut(),
+    ) {
+        // Keep the last editor while folding away, so the bar doesn't blank out as it closes.
+        var shown by remember { mutableStateOf(editor) }
+        if (editor != null) shown = editor
+        shown?.let { ed ->
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                shadowElevation = 6.dp,
+                tonalElevation = 2.dp,
+                modifier = Modifier.fillMaxWidth().testTag(TAG_SPREAD_TOOLBAR),
+            ) { FormattingBar(ed, atTop = true) }
+        }
     }
 }
 

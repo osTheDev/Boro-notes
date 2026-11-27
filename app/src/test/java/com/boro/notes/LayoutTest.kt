@@ -3,6 +3,8 @@ package com.boro.notes
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasTestTag
@@ -468,6 +470,15 @@ class InnerJournalLayoutTest {
         rule.onNodeWithTag("spread-delete-right").assertDoesNotExist()
         rule.onNodeWithTag(com.boro.notes.ui.TAG_READ_MODE).performClick()
         rule.waitForIdle()
+
+        // One formatting bar for both pages: it drops down when asked for and folds away again.
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_SPREAD_TOOLBAR).assertDoesNotExist()
+        rule.onNodeWithTag("spread-format").performClick()
+        rule.waitForIdle()
+        rule.onAllNodesWithTag(com.boro.notes.ui.TAG_SPREAD_TOOLBAR).assertCountEquals(1)
+        rule.onNodeWithTag("spread-format").performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_SPREAD_TOOLBAR).assertDoesNotExist()
 
         rule.onNodeWithTag("spread-delete-right").performClick()
         rule.waitForIdle()

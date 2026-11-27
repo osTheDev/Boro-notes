@@ -130,10 +130,12 @@ fun NoteEditor(
     showToolbar: Boolean = true,
     /** Reading only: nothing can be typed, drawn or changed. */
     readOnly: Boolean = false,
+    /** Hands out the editor, for a formatting bar shown somewhere else (the journal's book view). */
+    onEditor: (DocEditor) -> Unit = {},
 ) {
     // The editor owns the document once a note is open; reload only when another note opens.
     key(note.id) {
-        NoteEditorContent(note, onChange, wide, modifier, header, toolbarAtTop, barStart, barEnd, showToolbar && !readOnly, readOnly)
+        NoteEditorContent(note, onChange, wide, modifier, header, toolbarAtTop, barStart, barEnd, showToolbar && !readOnly, readOnly, onEditor)
     }
 }
 
@@ -270,8 +272,10 @@ private fun NoteEditorContent(
     barEnd: @Composable () -> Unit,
     showToolbar: Boolean,
     readOnly: Boolean,
+    onEditor: (DocEditor) -> Unit,
 ) {
     val editor = remember { DocEditor(NoteDoc.load(note.content, note.body)) }
+    LaunchedEffect(editor) { onEditor(editor) }
     SideEffect {
         if (editor.readOnly != readOnly) {
             editor.readOnly = readOnly
