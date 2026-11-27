@@ -803,6 +803,17 @@ private fun SpreadPage(
                         )
                     },
                 )
+            } else {
+                // No page here yet: the same ruled paper, so the spread looks like a book either way.
+                NoteEditor(
+                    note = vm.blankPaper(if (side == "left") 0 else 1),
+                    onChange = { _, _ -> },
+                    wide = true,
+                    modifier = Modifier.fillMaxSize(),
+                    toolbarAtTop = true,
+                    showToolbar = false,
+                    readOnly = true,
+                )
             }
         }
     }

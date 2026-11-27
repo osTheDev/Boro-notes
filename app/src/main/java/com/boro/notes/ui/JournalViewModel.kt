@@ -136,7 +136,8 @@ class JournalViewModel(
     fun turnForward(): Boolean {
         val start = spreadStart()
         val beyond = start + 2 < pages.value.size
-        if (!beyond && spreadPages().none { !isBlank(stateOf(it)) }) return false
+        // Reading: the book ends at its last page. Writing: past it come fresh pages, if these have words.
+        if (!beyond && (_reading.value || spreadPages().none { !isBlank(stateOf(it)) })) return false
         turnTo(start + 2)
         return true
     }
@@ -156,6 +157,9 @@ class JournalViewModel(
         days[id] = day
         return id
     }
+
+    /** Plain notebook paper for a page that doesn't exist yet (e.g. while it's being made). */
+    fun blankPaper(slot: Int): EditorState = EditorState(-1L - slot, "", "", NEW_PAGE)
 
     /** Page changes run one at a time, so dropping and making pages never race each other. */
     private val pageOps = Mutex()
