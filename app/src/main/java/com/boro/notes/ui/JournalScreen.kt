@@ -76,7 +76,6 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.TransformOrigin
@@ -336,7 +335,7 @@ private fun BookCover(title: String, color: Int, pattern: Int, modifier: Modifie
         modifier
             .aspectRatio(0.72f)
             .clip(shape)
-            .background(Brush.linearGradient(listOf(lerp(cloth, Color.White, 0.08f), cloth, dark)))
+            .background(cloth)
             .drawBehind {
                 drawHomePattern(COVER_PATTERNS[pattern.mod(COVER_PATTERNS.size)], Color.White.copy(alpha = 0.16f), (if (big) 34 else 20).dp.toPx())
                 // Spine, with a running stitch where the cover folds.
@@ -517,7 +516,7 @@ private fun PageList(
         Row(
             Modifier
                 .fillMaxWidth()
-                .background(Brush.horizontalGradient(listOf(cloth, lerp(cloth, Color.Black, 0.25f))))
+                .background(cloth)
                 .drawBehind { drawHomePattern(COVER_PATTERNS[book.pattern.mod(COVER_PATTERNS.size)], Color.White.copy(alpha = 0.14f), 22.dp.toPx()) }
                 .padding(horizontal = 4.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,

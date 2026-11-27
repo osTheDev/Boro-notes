@@ -204,7 +204,7 @@ private fun Tile(tile: HomeTile, subtitle: String, color: Color, onClick: () -> 
             .bounce(source)
             .alpha(if (soon) 0.55f else 1f)
             .clip(RoundedCornerShape(24.dp))
-            .background(Brush.linearGradient(listOf(color, lerpDark(color))))
+            .background(color)
             .stitchedBorder(Color.White.copy(alpha = 0.6f), inset = 7.dp, radius = 18.dp)
             .clickable(interactionSource = source, indication = LocalIndication.current, enabled = !soon, onClick = onClick)
             .padding(18.dp)
@@ -230,7 +230,6 @@ private fun Tile(tile: HomeTile, subtitle: String, color: Color, onClick: () -> 
     }
 }
 
-private fun lerpDark(c: Color) = androidx.compose.ui.graphics.lerp(c, Color.Black, 0.25f)
 
 private fun Modifier.stitchedBorder(color: Color, inset: Dp, radius: Dp) = drawBehind {
     val i = inset.toPx()
