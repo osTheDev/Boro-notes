@@ -3,6 +3,9 @@ package com.boro.notes
 import com.boro.notes.notes.CheckBlock
 import com.boro.notes.notes.ColumnsBlock
 import com.boro.notes.notes.DividerBlock
+import com.boro.notes.notes.DrawingBlock
+import com.boro.notes.notes.ImageBlock
+import com.boro.notes.notes.InkStroke
 import com.boro.notes.notes.NoteDoc
 import com.boro.notes.notes.PaperPattern
 import com.boro.notes.notes.PaperColor
@@ -88,5 +91,19 @@ class NoteDocTest {
         assertEquals(Paper(), NoteDoc.load(old, "").paper)
         // Removing the last block keeps the paper.
         assertEquals(doc.paper, doc.remove(doc.blocks.single().id).paper)
+    }
+
+    @Test
+    fun mediaBlocksRoundTrip() {
+        val doc = NoteDoc(listOf(
+            ImageBlock("a", "x.jpg", caption = "Moss", width = 0.6f),
+            DrawingBlock("b", listOf(InkStroke(0xFF2B2B2B, 3f, listOf(0.1f, 2f, 0.5f, 40f))), height = 360, caption = "Leaf"),
+        ))
+        val back = NoteDoc.load(doc.encode(), "")
+        // A text line is added after them so there is somewhere to type.
+        assertEquals(doc.blocks, back.blocks.take(2))
+        assertTrue(back.blocks.last() is TextBlock)
+        assertTrue(doc.plainText().contains("Moss"))
+        assertTrue(doc.plainText().contains("Leaf"))
     }
 }

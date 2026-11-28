@@ -10,6 +10,8 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.runtime.SideEffect
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -64,6 +66,8 @@ import com.boro.notes.notes.Paper
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.key.onPreviewKeyEvent
@@ -87,11 +91,14 @@ import com.boro.notes.notes.BoxFill
 import com.boro.notes.notes.CheckBlock
 import com.boro.notes.notes.ColumnsBlock
 import com.boro.notes.notes.DividerBlock
+import com.boro.notes.notes.DrawingBlock
+import com.boro.notes.notes.ImageBlock
 import com.boro.notes.notes.NoteDoc
 import com.boro.notes.notes.TableBlock
 import com.boro.notes.notes.TextBlock
 import com.boro.notes.notes.TextKind
 import com.mohamedrejeb.richeditor.model.RichTextState
+import androidx.compose.ui.text.rememberTextMeasurer
 import com.mohamedrejeb.richeditor.ui.BasicRichTextEditor
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.debounce
@@ -111,7 +118,7 @@ const val TAG_NOTE_PAPER = "notePaper"
  * formatting bar. Reports every change (debounced) as document JSON plus plain text.
  */
 @Composable
-fun NoteEditor(
+internal fun NoteEditor(
     note: EditorState,
     onChange: (content: String, plain: String) -> Unit,
     wide: Boolean,
@@ -122,10 +129,16 @@ fun NoteEditor(
     toolbarAtTop: Boolean = false,
     barStart: @Composable () -> Unit = {},
     barEnd: @Composable () -> Unit = {},
+    /** False hides the formatting bar (e.g. the journal's book view with formatting tucked away). */
+    showToolbar: Boolean = true,
+    /** Reading only: nothing can be typed, drawn or changed. */
+    readOnly: Boolean = false,
+    /** Hands out the editor, for a formatting bar shown somewhere else (the journal's book view). */
+    onEditor: (DocEditor) -> Unit = {},
 ) {
     // The editor owns the document once a note is open; reload only when another note opens.
     key(note.id) {
-        NoteEditorContent(note, onChange, wide, modifier, header, toolbarAtTop, barStart, barEnd)
+        NoteEditorContent(note, onChange, wide, modifier, header, toolbarAtTop, barStart, barEnd, showToolbar && !readOnly, readOnly, onEditor)
     }
 }
 
@@ -139,6 +152,16 @@ internal class DocEditor(initial: NoteDoc) {
     var focused by mutableStateOf<String?>(null)
     /** A block to focus as soon as it's on screen (e.g. a new checklist item). */
     var pendingFocus by mutableStateOf<String?>(null)
+    /** Pen for drawing blocks. */
+    var inkColor by mutableStateOf(INK_COLORS[0])
+    var inkWidth by mutableStateOf(3f)
+    var eraser by mutableStateOf(false)
+    /** The drawing open in the paint overlay (new or existing), or null. */
+    var sketching by mutableStateOf<DrawingBlock?>(null)
+    /** Width of the page's writing area in dp, so the overlay canvas matches where the drawing will sit. */
+    var pageWidthDp by mutableStateOf(0f)
+    /** Reading only: typing, drawing and selecting blocks are off. */
+    var readOnly by mutableStateOf(false)
 
     init {
         ensureStates(initial)
@@ -184,6 +207,8 @@ internal class DocEditor(initial: NoteDoc) {
             is TableBlock -> b.rows.joinToString("\n") { it.joinToString("  ") }
             is ColumnsBlock -> b.columns.indices.joinToString("\n") { rich["${b.id}#$it"]?.annotatedString?.text ?: "" }
             is DividerBlock -> ""
+            is ImageBlock -> b.caption
+            is DrawingBlock -> b.caption
         }
     }.trim()
 
@@ -192,6 +217,15 @@ internal class DocEditor(initial: NoteDoc) {
      * (so its menus show) and the keyboard stays shut; typing into it is one tap away.
      * [keyboard] moves real focus there, for flows that are already typing (checklist Enter).
      */
+    /** Puts a drawing from the overlay into the note: replaces it if it's already there, else inserts it. */
+    fun saveDrawing(d: DrawingBlock) {
+        if (doc.blocks.any { it.id == d.id }) update(doc.replace(d))
+        else update(doc.insertAfter(focusedBlockId, d))
+        focused = null
+        sketching = null
+        eraser = false
+    }
+
     fun insert(block: Block, focusKey: String = block.id, keyboard: Boolean = false) {
         update(doc.insertAfter(focusedBlockId, block))
         if (keyboard) pendingFocus = focusKey else focused = focusKey
@@ -202,7 +236,7 @@ internal class DocEditor(initial: NoteDoc) {
         is TextBlock, is CheckBlock -> b.id
         is ColumnsBlock -> "${b.id}#${b.columns.lastIndex}"
         is TableBlock -> "${b.id}@${b.rowCount - 1},${b.columnCount - 1}"
-        is DividerBlock -> null
+        is DividerBlock, is ImageBlock, is DrawingBlock -> null
     }
 
     /** Moves the cursor (and keyboard) to the end of [key]. */
@@ -213,7 +247,16 @@ internal class DocEditor(initial: NoteDoc) {
 
     /** Tapping the blank space under the note: continue typing on the last line. */
     fun focusLast() {
-        doc.blocks.lastOrNull()?.let(::endKey)?.let(::focusEnd)
+        val last = doc.blocks.lastOrNull()
+        if (last is TextBlock || last is CheckBlock) {
+            endKey(last)?.let(::focusEnd)
+            return
+        }
+        // Under a photo, drawing, table or columns: start a fresh line there and open the keyboard.
+        val line = TextBlock(NoteDoc.newId())
+        update(doc.copy(blocks = doc.blocks + line))
+        focused = null
+        pendingFocus = line.id
     }
 
     /**
@@ -252,8 +295,18 @@ private fun NoteEditorContent(
     toolbarAtTop: Boolean,
     barStart: @Composable () -> Unit,
     barEnd: @Composable () -> Unit,
+    showToolbar: Boolean,
+    readOnly: Boolean,
+    onEditor: (DocEditor) -> Unit,
 ) {
     val editor = remember { DocEditor(NoteDoc.load(note.content, note.body)) }
+    LaunchedEffect(editor) { onEditor(editor) }
+    SideEffect {
+        if (editor.readOnly != readOnly) {
+            editor.readOnly = readOnly
+            if (readOnly) editor.focused = null
+        }
+    }
     val latestOnChange by rememberUpdatedState(onChange)
 
     // Save shortly after typing stops.
@@ -276,7 +329,10 @@ private fun NoteEditorContent(
     val paper = editor.doc.paper
     val lined = paper.pattern != PaperPattern.PLAIN
     Column(modifier) {
-        if (toolbarAtTop) FormattingBar(editor, atTop = true, start = barStart, end = barEnd)
+        if (toolbarAtTop && showToolbar) FormattingBar(editor, atTop = true, start = barStart, end = barEnd)
+        else if (toolbarAtTop) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            barStart(); Spacer(Modifier.weight(1f)); barEnd()
+        }
         PaperTheme(paper) {
           // The page is at least as tall as the screen, so paper and lines always reach the bottom.
           BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
@@ -289,14 +345,27 @@ private fun NoteEditorContent(
                     .testTag(TAG_NOTE_PAPER),
             ) {
                 header()
-                val lineHeight = with(LocalDensity.current) { richTextStyle(TextKind.BODY).lineHeight.toDp() }
+                val bodyStyle = richTextStyle(TextKind.BODY)
+                val lineHeight = with(LocalDensity.current) { bodyStyle.lineHeight.toDp() }
+                // The ruled lines follow the text's real spacing, measured the way the editor lays it
+                // out (one paragraph per line), rather than a worked-out figure that can drift from it.
+                val measurer = rememberTextMeasurer()
+                val pitch = remember(bodyStyle, measurer) {
+                    runCatching {
+                        val sample = RichTextState().apply { setText(List(40) { "Ag" }.joinToString("\n")) }.annotatedString
+                        val r = measurer.measure(sample, bodyStyle)
+                        if (r.lineCount < 2) null else (r.getLineBottom(r.lineCount - 1) - r.getLineTop(0)) / r.lineCount
+                    }.getOrNull()
+                }
                 val start = if (paper.margin) 40.dp else 16.dp
+                val editorDensity = LocalDensity.current.density
                 Column(
                     Modifier
                         .fillMaxWidth()
                         .heightIn(min = pageHeight)
-                        .paperLines(paper, lineHeight, top = 8.dp, marginX = if (paper.margin) 30.dp else null)
+                        .paperLines(paper, lineHeight, pitch, top = 8.dp, marginX = if (paper.margin) 30.dp else null)
                         .padding(start = start, end = 16.dp, top = 8.dp, bottom = 8.dp)
+                        .onSizeChanged { editor.pageWidthDp = it.width / editorDensity }
                         .testTag(TAG_NOTE_EDITOR),
                     // On lined paper, text blocks sit flush so they stay on the lines.
                     verticalArrangement = Arrangement.spacedBy(if (lined) 0.dp else 6.dp),
@@ -309,6 +378,8 @@ private fun NoteEditorContent(
                                 is TableBlock -> TableBlockView(editor, block, wide)
                                 is ColumnsBlock -> ColumnsBlockView(editor, block, wide)
                                 is DividerBlock -> DividerBlockView(editor, block)
+                                is ImageBlock -> ImageBlockView(editor, block)
+                                is DrawingBlock -> DrawingBlockView(editor, block)
                             }
                         }
                     }
@@ -317,14 +388,17 @@ private fun NoteEditorContent(
                     val tapToType = Modifier.clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null,
-                    ) { editor.focusLast() }
+                    ) { if (!editor.readOnly) editor.focusLast() }
                     Box(Modifier.fillMaxWidth().weight(1f).then(tapToType).testTag(TAG_NOTE_BLANK))
                     Box(Modifier.fillMaxWidth().height(lineHeight * 6).then(tapToType))
                 }
             }
           }
         }
-        if (!toolbarAtTop) FormattingBar(editor)
+        if (!toolbarAtTop && showToolbar) FormattingBar(editor)
+    }
+    editor.sketching?.let { d ->
+        DrawingOverlay(editor, d, onDone = { editor.saveDrawing(it) }, onCancel = { editor.sketching = null; editor.eraser = false })
     }
 }
 
@@ -338,9 +412,22 @@ private fun PaperTheme(paper: Paper, content: @Composable () -> Unit) {
     }
     val cs = MaterialTheme.colorScheme
     val ink = if (paper.color.dark) Color(0xFFF1EEE8) else Color(0xFF1F1B16)
+    val base = Color(argb)
+    fun shade(a: Float) = ink.copy(alpha = a).compositeOver(base)
     MaterialTheme(
+        // Menus, popups and cards drawn on this paper take its colour too, so their ink stays readable
+        // (in dark mode they used to be dark panels with the paper's dark ink on them).
         colorScheme = cs.copy(
-            surface = Color(argb),
+            surface = base,
+            background = base,
+            surfaceBright = base,
+            surfaceDim = shade(0.08f),
+            surfaceContainerLowest = base,
+            surfaceContainerLow = shade(0.03f),
+            surfaceContainer = shade(0.05f),
+            surfaceContainerHighest = shade(0.12f),
+            surfaceVariant = shade(0.08f),
+            onBackground = ink,
             onSurface = ink,
             onSurfaceVariant = ink.copy(alpha = 0.6f),
             outline = ink.copy(alpha = 0.45f),
@@ -357,11 +444,12 @@ private fun PaperTheme(paper: Paper, content: @Composable () -> Unit) {
  * ([lineHeight] apart, starting [top] down), so writing sits on them like a notebook.
  */
 @Composable
-private fun Modifier.paperLines(paper: Paper, lineHeight: Dp, top: Dp, marginX: Dp?): Modifier {
+private fun Modifier.paperLines(paper: Paper, lineHeight: Dp, pitch: Float?, top: Dp, marginX: Dp?): Modifier {
     val ink = MaterialTheme.colorScheme.onSurface
     val marginColor = Color(0xFFE57373)
     return drawBehind {
-        val step = lineHeight.toPx()
+        // The measured spacing of the text's lines; else whole pixels, as text rounds its lines.
+        val step = pitch?.takeIf { it > 0f } ?: kotlin.math.ceil(lineHeight.toPx())
         val y0 = top.toPx()
         val thin = 1.dp.toPx()
         val line = ink.copy(alpha = 0.14f)
@@ -398,6 +486,9 @@ private fun Modifier.paperLines(paper: Paper, lineHeight: Dp, top: Dp, marginX: 
 @Composable
 private fun Modifier.trackFocus(editor: DocEditor, key: String): Modifier {
     val requester = remember { FocusRequester() }
+    // Ask for the keyboard whenever a line takes focus: after the photo picker (another screen)
+    // the window can come back without it, so a tap focused the line but no keyboard opened.
+    val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
     LaunchedEffect(editor.pendingFocus) {
         if (editor.pendingFocus == key) {
             runCatching { requester.requestFocus() }
@@ -406,7 +497,12 @@ private fun Modifier.trackFocus(editor: DocEditor, key: String): Modifier {
     }
     return this
         .focusRequester(requester)
-        .onFocusChanged { if (it.isFocused) editor.focused = key }
+        .onFocusChanged {
+            if (it.isFocused) {
+                editor.focused = key
+                if (!editor.readOnly) keyboard?.show()
+            }
+        }
 }
 
 @Composable
@@ -419,7 +515,21 @@ internal fun richTextStyle(kind: TextKind): TextStyle {
         TextKind.QUOTE -> t.bodyLarge.copy(fontStyle = FontStyle.Italic)
         TextKind.BODY -> t.bodyLarge
     }
-    return base.copy(color = MaterialTheme.colorScheme.onSurface)
+    return base.copy(color = MaterialTheme.colorScheme.onSurface).onWholePixels()
+}
+
+/**
+ * Snaps the line height to whole pixels. Text rounds each line up to a whole pixel, so a line
+ * height of e.g. 62.6 px would set every line 0.4 px lower than the paper's ruled lines, and after
+ * ten or so lines the writing would sit visibly off them. Just under the whole pixel, so rounding
+ * up lands exactly on it.
+ */
+@Composable
+private fun TextStyle.onWholePixels(): TextStyle {
+    if (!lineHeight.isSp) return this
+    val density = LocalDensity.current
+    val whole = with(density) { kotlin.math.round(lineHeight.toPx()) }
+    return copy(lineHeight = with(density) { (whole - 0.002f).toSp() })
 }
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -455,6 +565,7 @@ private fun RichArea(
         textStyle = style,
         cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
         onTextLayout = { layout = it },
+        readOnly = editor.readOnly,
         modifier = modifier
             .fillMaxWidth()
             .bringIntoViewRequester(bringIntoView)
@@ -495,12 +606,14 @@ private fun CheckBlockView(editor: DocEditor, block: CheckBlock) {
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.testTag(TAG_NOTE_CHECK)) {
         Checkbox(
             checked = block.checked,
+            enabled = !editor.readOnly,
             onCheckedChange = { editor.update(editor.doc.replace(editor.latest(block).copy(checked = it))) },
         )
         BasicTextField(
             value = block.text,
             onValueChange = { editor.update(editor.doc.replace(editor.latest(block).copy(text = it))) },
             singleLine = true,
+            readOnly = editor.readOnly,
             textStyle = MaterialTheme.typography.bodyLarge.copy(
                 color = if (block.checked) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
                 textDecoration = if (block.checked) TextDecoration.LineThrough else null,
@@ -544,6 +657,7 @@ private fun TableBlockView(editor: DocEditor, block: TableBlock, wide: Boolean) 
                         BasicTextField(
                             value = cell,
                             onValueChange = { v -> editor.update(editor.doc.replace(editor.latest(block).setCell(r, c, v))) },
+                            readOnly = editor.readOnly,
                             textStyle = MaterialTheme.typography.bodyMedium.copy(
                                 color = MaterialTheme.colorScheme.onSurface,
                                 fontWeight = if (r == 0) FontWeight.SemiBold else FontWeight.Normal,
@@ -628,7 +742,7 @@ private fun DividerBlockView(editor: DocEditor, block: DividerBlock) {
     Box(
         Modifier
             .fillMaxWidth()
-            .clickable { editor.focused = block.id }
+            .clickable(enabled = !editor.readOnly) { editor.focused = block.id }
             .background(if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f) else Color.Transparent)
             .padding(vertical = 12.dp)
     ) {

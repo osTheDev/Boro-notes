@@ -133,11 +133,16 @@ class DesignsViewModel(
     }
 
     fun deleteOpenDesign() {
-        val id = _sketch.value?.id ?: return
+        val current = _sketch.value ?: return
         saveJob?.cancel()
+        saveJob = null
         _sketch.value = null
         savedState.remove<Long>(KEY_OPEN_ID)
-        viewModelScope.launch { designs.delete(id) }
+        // Save last edits, then move to the Trash (restorable for a week) rather than deleting.
+        viewModelScope.launch {
+            persist(current)
+            designs.trash(current.id)
+        }
     }
 
     fun advanceStage(id: Long) {

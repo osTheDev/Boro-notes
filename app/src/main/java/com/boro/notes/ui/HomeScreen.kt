@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.BrightnessAuto
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Checkroom
 import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.EditNote
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Palette
@@ -56,7 +57,11 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Paint
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.DrawScope
@@ -81,6 +86,7 @@ data class HomeStats(
     val punchCards: Int = 0,
     val punchedToday: Int = 0,
     val openTodos: Int = 0,
+    val journals: Int = 0,
 )
 
 /** A home tile. [section] null means it's coming in a later update. */
@@ -97,11 +103,12 @@ private val TILES = listOf(
     HomeTile("DESIGNS", "Designs", Icons.Filled.Checkroom, 1, Section.DESIGNS),
     HomeTile("TASKS", "Tasks", Icons.Filled.TaskAlt, 2, Section.TASKS),
     HomeTile("SASHIKO", "Sashiko", Icons.Filled.Texture, 4, null),
-    HomeTile("JOURNAL", "Journal", Icons.Filled.AutoStories, 3, null),
+    HomeTile("JOURNAL", "Journal", Icons.Filled.AutoStories, 3, Section.JOURNAL),
 )
 
 const val TAG_HOME = "homeScreen"
 const val TAG_HOME_CUSTOMIZE = "homeCustomize"
+const val TAG_HOME_TRASH = "homeTrash"
 
 /** The landing page: a tile for each part of the app over a faint sashiko pattern. */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -111,11 +118,15 @@ fun HomeScreen(
     look: LookSettings,
     onLookChange: (LookSettings) -> Unit,
     onOpen: (Section) -> Unit,
+    onTrash: () -> Unit = {},
 ) {
     var customizing by remember { mutableStateOf(false) }
     val cs = MaterialTheme.colorScheme
     BoxWithConstraints(Modifier.fillMaxSize().background(cs.background).testTag(TAG_HOME)) {
         val columns = if (maxWidth >= 840.dp) 3 else 2
+        // Tiles share out the screen's height (within reason) instead of leaving a gap below.
+        val rows = (TILES.size + columns - 1) / columns
+        val tileHeight = ((maxHeight - 170.dp) / rows - 14.dp).coerceIn(140.dp, 260.dp)
         val pattern = cs.primary.copy(alpha = 0.07f)
         Canvas(Modifier.fillMaxSize()) { drawHomePattern(look.pattern, pattern, 36.dp.toPx()) }
         Column(
@@ -135,8 +146,17 @@ fun HomeScreen(
                         color = cs.onSurfaceVariant,
                     )
                 }
-                IconButton(onClick = { customizing = true }, modifier = Modifier.testTag(TAG_HOME_CUSTOMIZE)) {
-                    Icon(Icons.Filled.Palette, contentDescription = "Customise look", tint = cs.primary)
+                // The two header tools sit together on one small solid pill, clear of the pattern.
+                Row(
+                    Modifier.clip(RoundedCornerShape(50)).background(cs.surfaceContainerHigh),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    IconButton(onClick = onTrash, modifier = Modifier.testTag(TAG_HOME_TRASH)) {
+                        Icon(Icons.Filled.DeleteOutline, contentDescription = "Trash", tint = cs.onSurfaceVariant)
+                    }
+                    IconButton(onClick = { customizing = true }, modifier = Modifier.testTag(TAG_HOME_CUSTOMIZE)) {
+                        Icon(Icons.Filled.Palette, contentDescription = "Customise look", tint = cs.primary)
+                    }
                 }
             }
             Spacer(Modifier.height(4.dp))
@@ -148,11 +168,11 @@ fun HomeScreen(
                             subtitle = subtitleFor(tile, stats),
                             color = PUNCH_COLORS[(look.tileColors[tile.key] ?: tile.defaultColor).mod(PUNCH_COLORS.size)],
                             onClick = { tile.section?.let(onOpen) },
-                            // Tiles rise in one after another.
+                            height = tileHeight,
+                            // Tiles rise in one after another; a short last row stretches to fill it.
                             modifier = Modifier.weight(1f).popIn(r * columns + c),
                         )
                     }
-                    repeat(columns - row.size) { Spacer(Modifier.weight(1f)) }
                 }
             }
         }
@@ -178,27 +198,33 @@ private fun subtitleFor(tile: HomeTile, s: HomeStats): String = when (tile.key) 
         if (s.punchCards > 0) add("${s.punchedToday}/${s.punchCards} punched today")
         add(if (s.openTodos == 1) "1 to-do" else "${s.openTodos} to-dos")
     }.joinToString(" · ")
+    "JOURNAL" -> when (s.journals) {
+        0 -> "Start a book"
+        1 -> "1 book"
+        else -> "${s.journals} books"
+    }
     else -> "Coming soon"
 }
 
 /** A coloured tile with a running-stitch border, like a sashiko patch. */
 @Composable
-private fun Tile(tile: HomeTile, subtitle: String, color: Color, onClick: () -> Unit, modifier: Modifier) {
+private fun Tile(tile: HomeTile, subtitle: String, color: Color, onClick: () -> Unit, height: Dp, modifier: Modifier) {
     val soon = tile.section == null
+    val big = height >= 200.dp
     val source = remember { MutableInteractionSource() }
     Box(
         modifier
-            .height(150.dp)
+            .height(height)
             .bounce(source)
             .alpha(if (soon) 0.55f else 1f)
             .clip(RoundedCornerShape(24.dp))
-            .background(Brush.linearGradient(listOf(color, lerpDark(color))))
+            .background(color)
             .stitchedBorder(Color.White.copy(alpha = 0.6f), inset = 7.dp, radius = 18.dp)
             .clickable(interactionSource = source, indication = LocalIndication.current, enabled = !soon, onClick = onClick)
             .padding(18.dp)
             .testTag("tile-${tile.key.lowercase()}"),
     ) {
-        Icon(tile.icon, contentDescription = null, tint = Color.White, modifier = Modifier.size(34.dp).align(Alignment.TopStart))
+        Icon(tile.icon, contentDescription = null, tint = Color.White, modifier = Modifier.size(if (big) 44.dp else 34.dp).align(Alignment.TopStart))
         if (soon) {
             Text(
                 "Soon",
@@ -212,13 +238,12 @@ private fun Tile(tile: HomeTile, subtitle: String, color: Color, onClick: () -> 
             )
         }
         Column(Modifier.align(Alignment.BottomStart)) {
-            Text(tile.label, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold, color = Color.White)
-            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = 0.85f), maxLines = 2)
+            Text(tile.label, style = if (big) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold, color = Color.White)
+            Text(subtitle, style = if (big) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = 0.85f), maxLines = 2)
         }
     }
 }
 
-private fun lerpDark(c: Color) = androidx.compose.ui.graphics.lerp(c, Color.Black, 0.25f)
 
 private fun Modifier.stitchedBorder(color: Color, inset: Dp, radius: Dp) = drawBehind {
     val i = inset.toPx()
@@ -251,22 +276,25 @@ fun DrawScope.drawHomePattern(pattern: HomePattern, color: Color, cell: Float) {
             }
         }
         HomePattern.SEIGAIHA -> {
-            // Seigaiha: overlapping fans of concentric arcs.
+            // Seigaiha: rings of waves, each row overlapping the one above. Drawn on a layer of its
+            // own, every ring first clears what's behind it, so the waves above stop at its edge
+            // instead of their lines running through.
             val r = cell * 0.75f
+            drawIntoCanvas { it.saveLayer(Rect(Offset.Zero, size), Paint()) }
             var row = 0
-            var y = r
+            var y = -r
             while (y < size.height + r * 2) {
                 var x = if (row % 2 == 0) 0f else r
                 while (x < size.width + r * 2) {
-                    for (k in 1..3) {
-                        val rr = r * k / 3f
-                        drawArc(color, 180f, 180f, false, Offset(x - rr, y - rr), Size(rr * 2, rr * 2), style = Stroke(w))
-                    }
+                    val c = Offset(x, y)
+                    drawCircle(Color.Black, r, c, blendMode = BlendMode.Clear)
+                    for (k in 1..3) drawCircle(color, r * k / 3f, c, style = Stroke(w))
                     x += r * 2
                 }
                 y += r / 2
                 row++
             }
+            drawIntoCanvas { it.restore() }
         }
         HomePattern.STITCH -> {
             // Rows of running stitch, alternating offset.

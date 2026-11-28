@@ -13,4 +13,6 @@ data class Note(
     val content: String? = null,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = createdAt,
+    /** When it was moved to the Trash; null while it's a live note. */
+    val deletedAt: Long? = null,
 )

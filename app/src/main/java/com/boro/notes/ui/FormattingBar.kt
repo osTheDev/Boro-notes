@@ -24,7 +24,16 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.FormatIndentDecrease
 import androidx.compose.material.icons.automirrored.filled.FormatIndentIncrease
 import androidx.compose.material.icons.automirrored.filled.FormatListBulleted
+import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AddPhotoAlternate
+import androidx.compose.material.icons.filled.AutoFixNormal
+import androidx.compose.material.icons.filled.Brush
+import androidx.compose.material.icons.filled.Draw
+import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.LineWeight
+import androidx.compose.material.icons.filled.UnfoldLess
+import androidx.compose.material.icons.filled.UnfoldMore
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Check
@@ -60,6 +69,12 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.platform.LocalContext
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -85,6 +100,8 @@ import com.boro.notes.notes.BoxFill
 import com.boro.notes.notes.CheckBlock
 import com.boro.notes.notes.ColumnsBlock
 import com.boro.notes.notes.DividerBlock
+import com.boro.notes.notes.DrawingBlock
+import com.boro.notes.notes.ImageBlock
 import com.boro.notes.notes.NoteDoc
 import com.boro.notes.notes.Paper
 import com.boro.notes.notes.PaperColor
@@ -125,6 +142,8 @@ internal fun FormattingBar(
     /** App bar items around the tools when [atTop] (back button; full screen, delete). */
     start: @Composable () -> Unit = {},
     end: @Composable () -> Unit = {},
+    /** Laid out as a block, wrapping onto more rows instead of scrolling sideways (the journal's book view). */
+    block: Boolean = false,
 ) {
     val focusManager = LocalFocusManager.current
     var open by rememberSaveable { mutableStateOf(true) }
@@ -137,6 +156,14 @@ internal fun FormattingBar(
     fun insert(block: Block, focusKey: String = block.id) {
         focusManager.clearFocus()
         editor.insert(block, focusKey)
+    }
+    // Photos come from the system photo picker (no storage permission needed) and are copied in.
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val pickPhoto = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) scope.launch {
+            importImage(context, uri)?.let { insert(ImageBlock(NoteDoc.newId(), it)) }
+        }
     }
 
     val showPill: @Composable () -> Unit = {
@@ -154,13 +181,9 @@ internal fun FormattingBar(
             Text("Format", color = cs.onPrimaryContainer, style = MaterialTheme.typography.labelLarge)
         }
     }
-    val blockRow: @Composable () -> Unit = {
-        if (open && focusedBlock != null && focusedBlock !is TextBlock) {
-            if (atTop) HorizontalDivider(color = cs.outlineVariant.copy(alpha = 0.5f))
-            BlockToolsRow(editor, focusedBlock)
-            if (!atTop) HorizontalDivider(color = cs.outlineVariant.copy(alpha = 0.5f))
-        }
-    }
+    // The bar follows what you're working on: typing shows text tools, a selected table, photo,
+    // drawing or divider shows only its own tools, and nothing selected shows insert and page.
+    val objectSelected = focusedBlock is TableBlock || focusedBlock is ImageBlock || focusedBlock is DrawingBlock || focusedBlock is DividerBlock
 
     Surface(
         tonalElevation = 3.dp,
@@ -168,7 +191,6 @@ internal fun FormattingBar(
         modifier = Modifier.fillMaxWidth().testTag(TAG_FORMAT_BAR),
     ) {
       Column {
-        if (!atTop) blockRow()
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
           start()
           Box(Modifier.weight(1f)) {
@@ -178,11 +200,8 @@ internal fun FormattingBar(
                     horizontalArrangement = if (atTop) Arrangement.Start else Arrangement.End,
                 ) { showPill() }
             } else {
-            Row(
-                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp, vertical = 6.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
+            val tools: @Composable () -> Unit = {
+              if (rich != null) {
                 // Text: paragraph style, B I U S, colour, highlight.
                 ToolGroup(cs.primaryContainer, cs.onPrimaryContainer) {
                     ToolMenu(Icons.Filled.TextFields, "Text style", "format-style") { close ->
@@ -245,7 +264,6 @@ internal fun FormattingBar(
                     ToolButton(Icons.Filled.FormatListNumbered, "Numbers", "format-numbers", enabled = rich != null, selected = rich?.isOrderedList == true) {
                         rich?.toggleOrderedList()
                     }
-                    ToolButton(Icons.Filled.CheckBox, "Checklist", "insert-check") { insert(CheckBlock(NoteDoc.newId())) }
                     ToolButton(Icons.AutoMirrored.Filled.FormatIndentDecrease, "Outdent", "format-outdent", enabled = rich?.canDecreaseListLevel == true) {
                         rich?.decreaseListLevel()
                     }
@@ -253,8 +271,11 @@ internal fun FormattingBar(
                         rich?.increaseListLevel()
                     }
                 }
+              }
+              if (!objectSelected) {
                 // Insert blocks.
                 ToolGroup(cs.tertiaryContainer, cs.onTertiaryContainer) {
+                    ToolButton(Icons.Filled.CheckBox, "Checklist", "insert-check") { insert(CheckBlock(NoteDoc.newId())) }
                     ToolButton(Icons.Filled.TableChart, "Insert table", "insert-table") {
                         val t = TableBlock.blank(); insert(t, "${t.id}@0,0")
                     }
@@ -265,6 +286,15 @@ internal fun FormattingBar(
                         val c = ColumnsBlock(NoteDoc.newId(), listOf("", "", "")); insert(c, "${c.id}#0")
                     }
                     ToolButton(Icons.Filled.HorizontalRule, "Insert divider", "insert-divider") { insert(DividerBlock(NoteDoc.newId())) }
+                    ToolButton(Icons.Filled.AddPhotoAlternate, "Insert photo", "insert-image") {
+                        runCatching { pickPhoto.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
+                    }
+                    ToolButton(Icons.Filled.Draw, "Insert drawing", "insert-drawing") {
+                        // Draw in the paint overlay first; the drawing goes into the note when confirmed.
+                        focusManager.clearFocus()
+                        editor.eraser = false
+                        editor.sketching = DrawingBlock(NoteDoc.newId(), pattern = 1)
+                    }
                 }
                 // Page look.
                 ToolGroup(cs.surfaceVariant, cs.onSurfaceVariant) {
@@ -272,40 +302,53 @@ internal fun FormattingBar(
                         PageMenu(editor.doc.paper) { editor.update(editor.doc.copy(paper = it)); close() }
                     }
                 }
-                ToolButton(Icons.Filled.KeyboardArrowDown, "Hide formatting", "format-hide") { open = false }
+              }
+              if (focusedBlock != null && focusedBlock !is TextBlock) BlockTools(editor, focusedBlock, label = objectSelected)
+                if (!block) ToolButton(Icons.Filled.KeyboardArrowDown, "Hide formatting", "format-hide") { open = false }
+            }
+            if (block) {
+                @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+                androidx.compose.foundation.layout.FlowRow(
+                    Modifier.fillMaxWidth().padding(8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) { tools() }
+            } else {
+                Row(
+                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) { tools() }
             }
             }
           }
           end()
         }
-        if (atTop) blockRow()
       }
     }
 }
 
-/** Tools for the selected table, columns, checklist item or divider. */
+/** Tools for the selected table, columns, checklist item, photo, drawing or divider, shown in the bar. */
 @Composable
-private fun BlockToolsRow(editor: DocEditor, block: Block) {
+private fun BlockTools(editor: DocEditor, block: Block, label: Boolean) {
     val cs = MaterialTheme.colorScheme
-    val (label, icon) = when (block) {
+    val (name, icon) = when (block) {
         is TableBlock -> "Table" to Icons.Filled.TableChart
         is ColumnsBlock -> "Columns" to Icons.Filled.ViewColumn
         is DividerBlock -> "Divider" to Icons.Filled.HorizontalRule
         is CheckBlock -> "Checklist" to Icons.Filled.CheckBox
         is TextBlock -> "Text" to Icons.Filled.TextFields
+        is ImageBlock -> "Photo" to Icons.Filled.Image
+        is DrawingBlock -> "Drawing" to Icons.Filled.Brush
     }
-    Row(
-        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Row(
-            Modifier.clip(RoundedCornerShape(50)).background(cs.inverseSurface).padding(horizontal = 10.dp, vertical = 6.dp),
+    run {
+        if (label) Row(
+            Modifier.height(46.dp).clip(RoundedCornerShape(14.dp)).background(cs.inverseSurface).padding(horizontal = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Icon(icon, null, tint = cs.inverseOnSurface, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(6.dp))
-            Text(label, color = cs.inverseOnSurface, style = MaterialTheme.typography.labelLarge)
+            Text(name, color = cs.inverseOnSurface, style = MaterialTheme.typography.labelLarge)
         }
         if (block is TableBlock || block is ColumnsBlock) {
             val current = (block as? TableBlock)?.fill ?: (block as? ColumnsBlock)?.fill
@@ -323,6 +366,17 @@ private fun BlockToolsRow(editor: DocEditor, block: Block) {
                 }
             }
         }
+        if (block is ImageBlock) {
+            val img = { editor.latest(block) }
+            ToolGroup(cs.tertiaryContainer, cs.onTertiaryContainer) {
+                listOf("Small" to 0.4f, "Half" to 0.6f, "Full" to 1f).forEach { (name, w) ->
+                    ChipTool(name, "image-${name.lowercase()}", selected = img().width == w) {
+                        editor.update(editor.doc.replace(img().copy(width = w)))
+                    }
+                }
+            }
+        }
+        if (block is DrawingBlock) DrawingTools(editor, block)
         if (block is TableBlock) {
             val (r, c) = editor.focused?.substringAfter('@', "")?.split(',')?.map { it.toIntOrNull() ?: 0 }
                 ?.let { it.getOrElse(0) { 0 } to it.getOrElse(1) { 0 } } ?: (0 to 0)
@@ -339,7 +393,7 @@ private fun BlockToolsRow(editor: DocEditor, block: Block) {
             ToolButton(Icons.Filled.ArrowDownward, "Move down", "block-down") { editor.update(editor.doc.move(block.id, 1)) }
         }
         ToolGroup(cs.errorContainer, cs.onErrorContainer) {
-            ToolButton(Icons.Filled.Delete, "Delete $label", "block-delete") {
+            ToolButton(Icons.Filled.Delete, "Delete $name", "block-delete") {
                 editor.update(editor.doc.remove(block.id))
                 editor.focused = null
             }
@@ -347,9 +401,37 @@ private fun BlockToolsRow(editor: DocEditor, block: Block) {
     }
 }
 
+/** A placed drawing is locked: it only changes in the paint overlay. */
+@Composable
+private fun DrawingTools(editor: DocEditor, block: DrawingBlock) {
+    val cs = MaterialTheme.colorScheme
+    ToolGroup(cs.primary, cs.onPrimary) {
+        LabeledTool(Icons.Filled.Brush, "Edit drawing", "drawing-edit") {
+            editor.eraser = false
+            editor.sketching = editor.latest(block)
+        }
+    }
+}
+
+/** A word-only tool, e.g. a photo size. */
+@Composable
+private fun ChipTool(label: String, tag: String, selected: Boolean, onClick: () -> Unit) {
+    val tint = LocalContentColor.current
+    Box(
+        Modifier
+            .height(42.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(if (selected) tint.copy(alpha = 0.18f) else Color.Transparent)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp)
+            .testTag(tag),
+        contentAlignment = Alignment.Center,
+    ) { Text(label, style = MaterialTheme.typography.labelLarge, color = tint) }
+}
+
 /** Paper colour swatches, line pattern previews and the margin switch. */
 @Composable
-private fun PageMenu(paper: Paper, onChange: (Paper) -> Unit) {
+internal fun PageMenu(paper: Paper, onChange: (Paper) -> Unit) {
     val cs = MaterialTheme.colorScheme
     MenuLabel("Paper")
     SwatchGrid(
@@ -415,10 +497,10 @@ private fun PatternPreview(pattern: PaperPattern, selected: Boolean, modifier: M
 
 /** Colour choices open as a spiralling paint wheel (see [PaletteWheel]). */
 @Composable
-private fun SwatchGrid(swatches: List<Swatch>, onPick: (Swatch) -> Unit) = PaletteWheel(swatches, onPick)
+internal fun SwatchGrid(swatches: List<Swatch>, onPick: (Swatch) -> Unit) = PaletteWheel(swatches, onPick)
 
 @Composable
-private fun MenuLabel(text: String) {
+internal fun MenuLabel(text: String) {
     Text(
         text,
         style = MaterialTheme.typography.labelMedium,
@@ -429,7 +511,7 @@ private fun MenuLabel(text: String) {
 
 /** A rounded tinted group of tools, so related tools read as one at a glance. */
 @Composable
-private fun ToolGroup(container: Color, content: Color, tools: @Composable () -> Unit) {
+internal fun ToolGroup(container: Color, content: Color, tools: @Composable () -> Unit) {
     Row(
         Modifier.clip(RoundedCornerShape(14.dp)).background(container).padding(2.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -440,7 +522,7 @@ private fun ToolGroup(container: Color, content: Color, tools: @Composable () ->
 
 /** An icon tool. [selected] shows it's on (e.g. bold); [accent] draws a colour bar under it. */
 @Composable
-private fun ToolButton(
+internal fun ToolButton(
     icon: ImageVector,
     description: String,
     tag: String,
@@ -476,7 +558,7 @@ private fun ToolButton(
 
 /** A small tool with an icon and a word, for actions an icon alone can't say (add row vs column). */
 @Composable
-private fun LabeledTool(icon: ImageVector, label: String, tag: String, onClick: () -> Unit) {
+internal fun LabeledTool(icon: ImageVector, label: String, tag: String, onClick: () -> Unit) {
     Row(
         Modifier
             .height(42.dp)
@@ -494,7 +576,7 @@ private fun LabeledTool(icon: ImageVector, label: String, tag: String, onClick: 
 
 /** An icon tool that opens a menu. */
 @Composable
-private fun ToolMenu(
+internal fun ToolMenu(
     icon: ImageVector,
     description: String,
     tag: String,

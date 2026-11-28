@@ -267,7 +267,9 @@ class DesignsViewModelTest {
         vm.deleteOpenDesign()
         advanceUntilIdle()
         assertNull(vm.sketch.value)
-        assertEquals(1, designs.designs.value.size)
+        // The deleted design waits in the Trash.
+        assertEquals(1, designs.designs.value.count { it.deletedAt == null })
+        assertEquals(1, designs.designs.value.count { it.deletedAt != null })
         assertFalse(vm.all.value.isEmpty())
     }
 }

@@ -11,7 +11,8 @@ interface NoteDao {
     @Query(
         """
         SELECT * FROM notes
-        WHERE :query = '' OR title LIKE '%' || :query || '%' OR body LIKE '%' || :query || '%'
+        WHERE deletedAt IS NULL
+          AND (:query = '' OR title LIKE '%' || :query || '%' OR body LIKE '%' || :query || '%')
         ORDER BY updatedAt DESC
         """
     )
@@ -28,4 +29,13 @@ interface NoteDao {
 
     @Query("DELETE FROM notes WHERE id = :id")
     suspend fun delete(id: Long)
+
+    @Query("SELECT * FROM notes WHERE deletedAt IS NOT NULL ORDER BY deletedAt DESC")
+    fun observeTrash(): Flow<List<Note>>
+
+    @Query("UPDATE notes SET deletedAt = :at WHERE id = :id")
+    suspend fun setDeleted(id: Long, at: Long?)
+
+    @Query("DELETE FROM notes WHERE deletedAt IS NOT NULL AND deletedAt < :before")
+    suspend fun purge(before: Long)
 }

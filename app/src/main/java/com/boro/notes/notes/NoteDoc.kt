@@ -73,6 +73,8 @@ data class NoteDoc(val blocks: List<Block>, val paper: Paper = Paper()) {
             is TableBlock -> b.rows.joinToString("\n") { it.joinToString("  ") }
             is ColumnsBlock -> b.columns.joinToString("\n", transform = htmlToText)
             is DividerBlock -> ""
+            is ImageBlock -> b.caption
+            is DrawingBlock -> b.caption
         }
     }.trim()
 
@@ -80,6 +82,10 @@ data class NoteDoc(val blocks: List<Block>, val paper: Paper = Paper()) {
 
     companion object {
         private val json = Json { ignoreUnknownKeys = true; classDiscriminator = "type" }
+
+        /** A paper setting on its own (e.g. a journal's page paper), as JSON. */
+        fun encodePaper(paper: Paper): String = json.encodeToString(paper)
+        fun decodePaper(text: String?): Paper? = text?.let { runCatching { json.decodeFromString<Paper>(it) }.getOrNull() }
 
         fun newId(): String = UUID.randomUUID().toString().take(8)
 
@@ -185,3 +191,26 @@ data class ColumnsBlock(override val id: String, val columns: List<String>, val 
 @Serializable
 @SerialName("divider")
 data class DividerBlock(override val id: String) : Block
+
+/** A photo stored in the app's files ([file] is its name in the images folder). [width] is the share of the page width. */
+@Serializable
+@SerialName("image")
+data class ImageBlock(override val id: String, val file: String, val caption: String = "", val width: Float = 1f) : Block
+
+/** A finger drawing. [height] is in dp; stroke x positions are fractions of the width so it scales across screens. */
+@Serializable
+@SerialName("drawing")
+data class DrawingBlock(
+    override val id: String,
+    val strokes: List<InkStroke> = emptyList(),
+    val height: Int = 280,
+    val caption: String = "",
+    /** Canvas colour (ARGB); null = a soft card that follows the page, 0 = clear (sits right on the page). */
+    val paper: Long? = null,
+    /** Canvas guide: 0 none, 1 dots, 2 grid, 3 lines. */
+    val pattern: Int = 0,
+) : Block
+
+/** One stroke: colour (ARGB), width in dp, and points as x (fraction of width), y (dp) pairs. */
+@Serializable
+data class InkStroke(val color: Long, val width: Float, val points: List<Float>)

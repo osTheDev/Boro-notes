@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
@@ -34,6 +35,21 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
+import com.boro.notes.notes.NoteDoc
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -58,8 +74,9 @@ fun NotesScreen(vm: NotesViewModel) {
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val wide = maxWidth >= TWO_PANE_MIN_WIDTH
-        val list = @Composable { modifier: Modifier ->
+        val list = @Composable { modifier: Modifier, grid: Boolean ->
             NoteListPane(
+                grid = grid,
                 notes = notes,
                 query = query,
                 selectedId = editor?.id,
@@ -73,19 +90,20 @@ fun NotesScreen(vm: NotesViewModel) {
         val current = editor
 
         if (wide) {
-            Row(Modifier.fillMaxSize()) {
-                list(Modifier.weight(0.4f).testTag(TAG_LIST_PANE))
-                VerticalDivider()
-                Box(Modifier.weight(0.6f).fillMaxSize()) {
-                    if (current != null) {
+            if (current == null) {
+                // Nothing open: the whole inner screen is a grid of note cards.
+                list(Modifier.fillMaxSize().testTag(TAG_LIST_PANE), true)
+            } else {
+                Row(Modifier.fillMaxSize()) {
+                    list(Modifier.weight(0.4f).testTag(TAG_LIST_PANE), false)
+                    VerticalDivider()
+                    Box(Modifier.weight(0.6f).fillMaxSize()) {
                         EditorPane(current, vm, onBack = null, onExpand = { vm.setFullScreen(true) })
-                    } else {
-                        EmptyDetail()
                     }
                 }
             }
         } else if (current == null) {
-            list(Modifier.fillMaxSize().testTag(TAG_LIST_PANE))
+            list(Modifier.fillMaxSize().testTag(TAG_LIST_PANE), false)
         } else {
             BackHandler { vm.close() }
             EditorPane(current, vm, onBack = vm::close)
@@ -103,6 +121,8 @@ internal fun NoteListPane(
     onOpen: (Long) -> Unit,
     onCreate: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Cards in a grid that fills the width (inner screen with nothing open). */
+    grid: Boolean = false,
 ) {
     Scaffold(
         modifier = modifier,
@@ -123,6 +143,7 @@ internal fun NoteListPane(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 8.dp)
+                    .then(if (grid) Modifier.widthIn(max = 560.dp) else Modifier)
                     .testTag(TAG_SEARCH),
             )
             if (notes.isEmpty()) {
@@ -132,6 +153,16 @@ internal fun NoteListPane(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
+            } else if (grid) {
+                LazyVerticalGrid(
+                    columns = GridCells.Adaptive(220.dp),
+                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 96.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier.fillMaxSize(),
+                ) {
+                    items(notes, key = { it.id }) { note -> NoteCard(note) { onOpen(note.id) } }
+                }
             } else {
                 LazyColumn(Modifier.fillMaxSize()) {
                     items(notes, key = { it.id }) { note ->
@@ -140,6 +171,55 @@ internal fun NoteListPane(
                 }
             }
         }
+    }
+}
+
+/** A note as a card on its own paper colour, with a longer preview and when it was last edited. */
+@Composable
+private fun NoteCard(note: Note, onClick: () -> Unit) {
+    val cs = MaterialTheme.colorScheme
+    val paper = remember(note.content) { NoteDoc.load(note.content, note.body).paper.color }
+    val bg = paper.argb?.let { Color(it) } ?: cs.surfaceContainer
+    val ink = when {
+        paper.argb == null -> cs.onSurface
+        paper.dark -> Color(0xFFF1EEE8)
+        else -> Color(0xFF1F1B16)
+    }
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .heightIn(min = 150.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(bg)
+            .border(1.dp, cs.outlineVariant.copy(alpha = 0.5f), RoundedCornerShape(16.dp))
+            .clickable(onClick = onClick)
+            .padding(16.dp)
+            .testTag("$TAG_NOTE_PREFIX${note.id}"),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text(
+            note.title.ifBlank { "Untitled" },
+            style = MaterialTheme.typography.titleMedium,
+            color = ink,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
+        if (note.body.isNotBlank()) {
+            Text(
+                note.body,
+                style = MaterialTheme.typography.bodyMedium,
+                color = ink.copy(alpha = 0.72f),
+                maxLines = 6,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Spacer(Modifier.weight(1f, fill = false))
+        Text(
+            java.time.Instant.ofEpochMilli(note.updatedAt).atZone(java.time.ZoneId.systemDefault()).toLocalDate()
+                .format(java.time.format.DateTimeFormatter.ofPattern("MMM d")),
+            style = MaterialTheme.typography.labelSmall,
+            color = ink.copy(alpha = 0.55f),
+        )
     }
 }
 
@@ -182,6 +262,8 @@ internal fun EditorPane(
             }
         }
     }
+    var confirmDelete by remember { mutableStateOf(false) }
+    if (confirmDelete) ConfirmDeleteDialog("this note", onConfirm = vm::deleteOpenNote, onDismiss = { confirmDelete = false })
     val actions: @Composable () -> Unit = {
         Row(verticalAlignment = Alignment.CenterVertically) {
             extraActions()
@@ -189,7 +271,7 @@ internal fun EditorPane(
                 TextButton(onClick = onExpand, modifier = Modifier.testTag(TAG_EXPAND)) { Text("Full screen") }
             }
             if (showDelete) {
-                IconButton(onClick = vm::deleteOpenNote, modifier = Modifier.testTag(TAG_DELETE)) {
+                IconButton(onClick = { confirmDelete = true }, modifier = Modifier.testTag(TAG_DELETE)) {
                     Icon(Icons.Filled.Delete, contentDescription = "Delete note")
                 }
             }

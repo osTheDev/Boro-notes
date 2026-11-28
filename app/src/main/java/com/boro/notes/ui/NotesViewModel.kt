@@ -102,7 +102,10 @@ class NotesViewModel(
         saveJob?.cancel()
         _fullScreen.value = false
         clearOpen()
-        viewModelScope.launch { repository.delete(current.id) }
+        viewModelScope.launch {
+            repository.save(current.id, current.title, current.body, current.content)
+            repository.trash(current.id)
+        }
     }
 
     fun onTitleChange(value: String) = edit { it.copy(title = value) }

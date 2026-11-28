@@ -12,9 +12,13 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.zIndex
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.ui.unit.dp
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoStories
 import androidx.compose.material.icons.filled.Checkroom
 import androidx.compose.material.icons.filled.EditNote
 import androidx.compose.material.icons.filled.Home
@@ -83,6 +87,7 @@ enum class Section(val label: String, val icon: ImageVector, val tag: String) {
     NOTES("Notes", Icons.Filled.EditNote, "navNotes"),
     DESIGNS("Designs", Icons.Filled.Checkroom, "navDesigns"),
     TASKS("Tasks", Icons.Filled.TaskAlt, "navTasks"),
+    JOURNAL("Journal", Icons.Filled.AutoStories, "navJournal"),
 }
 
 /** Top level: Home, Notes, Designs and Tasks, with a bottom bar on the cover screen and a side rail on the inner screen. */
@@ -91,11 +96,21 @@ fun BoroRoot(
     notesVm: NotesViewModel,
     designsVm: DesignsViewModel,
     tasksVm: TasksViewModel,
+    journalVm: JournalViewModel,
+    trashVm: TrashViewModel,
     look: LookSettings = LookSettings(),
     onLookChange: (LookSettings) -> Unit = {},
 ) {
     var section by rememberSaveable { mutableStateOf(Section.HOME) }
+    var trashOpen by rememberSaveable { mutableStateOf(false) }
     BackHandler(enabled = section != Section.HOME) { section = Section.HOME }
+    if (trashOpen) {
+        BackHandler { trashOpen = false }
+        TrashScreen(trashVm, onBack = { trashOpen = false })
+        return
+    }
+    val bookOpen = journalVm.openId.collectAsStateWithLifecycle().value != null
+    val bookView by journalVm.bookView.collectAsStateWithLifecycle()
     val noteOpen = notesVm.editor.collectAsStateWithLifecycle().value != null
     val sketchOpen = designsVm.sketch.collectAsStateWithLifecycle().value != null
     val fullScreen by notesVm.fullScreen.collectAsStateWithLifecycle()
@@ -123,6 +138,7 @@ fun BoroRoot(
                         val designs by designsVm.all.collectAsStateWithLifecycle()
                         val habits by tasksVm.habits.collectAsStateWithLifecycle()
                         val todos by tasksVm.todos.collectAsStateWithLifecycle()
+                        val journals by journalVm.journals.collectAsStateWithLifecycle()
                         val todayIndex = tasksVm.todayDate().dayOfWeek.value - 1
                         HomeScreen(
                             stats = HomeStats(
@@ -131,22 +147,34 @@ fun BoroRoot(
                                 punchCards = habits.size,
                                 punchedToday = if (tasksVm.isThisWeek) habits.count { it.punched[todayIndex] } else 0,
                                 openTodos = todos.count { !it.done },
+                                journals = journals.size,
                             ),
                             look = look,
                             onLookChange = onLookChange,
                             onOpen = { section = it },
+                            onTrash = { trashOpen = true },
                         )
                     }
                     Section.NOTES -> NotesScreen(notesVm)
                     Section.DESIGNS -> DesignsScreen(designsVm, notesVm, wide)
                     Section.TASKS -> TasksScreen(tasksVm, wide)
+                    Section.JOURNAL -> JournalScreen(journalVm, wide)
                 }
             }
         }
 
         if (wide) {
             Row(Modifier.fillMaxSize()) {
-                NavigationRail {
+              // The journal's book view takes the whole screen, side menu included.
+              if (!(section == Section.JOURNAL && bookOpen && bookView)) {
+                // A solid panel casting a shadow, so the side menu reads as its own surface
+                // and the textured screens sit beside it instead of just stopping.
+                NavigationRail(
+                    containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                    modifier = Modifier
+                        .zIndex(1f)
+                        .shadow(8.dp),
+                ) {
                     Section.entries.forEach { s ->
                         NavigationRailItem(
                             selected = section == s,
@@ -157,6 +185,7 @@ fun BoroRoot(
                         )
                     }
                 }
+              }
                 content(Modifier.weight(1f).fillMaxSize())
             }
         } else {
@@ -164,6 +193,8 @@ fun BoroRoot(
             val showBar = when (section) {
                 Section.NOTES -> !noteOpen
                 Section.DESIGNS -> !sketchOpen
+                // An open book gets the whole cover screen (closed cover or pages).
+                Section.JOURNAL -> !bookOpen
                 Section.HOME, Section.TASKS -> true
             }
             Column(Modifier.fillMaxSize()) {

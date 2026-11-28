@@ -3,6 +3,8 @@ package com.boro.notes
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasTestTag
@@ -75,8 +77,10 @@ class InnerScreenLayoutTest {
         val vm = NotesViewModel(repo, SavedStateHandle())
         rule.setContent { NotesScreen(vm) }
 
+        // Nothing open: notes fill the inner screen as cards, no empty half.
         rule.onNodeWithTag(TAG_LIST_PANE).assertIsDisplayed()
-        rule.onNodeWithTag(TAG_EMPTY_DETAIL).assertIsDisplayed()
+        rule.onNodeWithTag("${TAG_NOTE_PREFIX}1").assertIsDisplayed()
+        rule.onNodeWithTag(TAG_EMPTY_DETAIL).assertDoesNotExist()
 
         rule.onNodeWithTag("${TAG_NOTE_PREFIX}1").performClick()
         rule.waitForIdle()
@@ -109,7 +113,13 @@ class RichNoteLayoutTest {
         rule.onNodeWithTag("insert-table").performScrollTo().performClick()
         rule.waitForIdle()
         rule.onNodeWithTag(TAG_NOTE_TABLE).assertExists()
+        // In a table the bar shows the table's tools, not the insert tools.
+        rule.onNodeWithTag("table-add-row").assertExists()
+        rule.onNodeWithTag("insert-table").assertDoesNotExist()
 
+        // Tapping under the table goes back to writing, with insert tools again.
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_NOTE_BLANK).performScrollTo().performClick()
+        rule.waitForIdle()
         rule.onNodeWithTag("insert-columns").performScrollTo().performClick()
         rule.waitForIdle()
         rule.onNodeWithTag(TAG_NOTE_COLUMNS).assertExists()
@@ -228,7 +238,7 @@ class CoverDesignsLayoutTest {
         val notes = FakeNoteRepository()
         val notesVm = NotesViewModel(notes, SavedStateHandle())
         val designsVm = com.boro.notes.ui.DesignsViewModel(FakeDesignRepository(), notes, SavedStateHandle())
-        rule.setContent { com.boro.notes.ui.BoroRoot(notesVm, designsVm, com.boro.notes.ui.TasksViewModel(FakeTaskRepository())) }
+        rule.setContent { testRoot(notesVm, designsVm) }
 
         rule.onNodeWithTag("navDesigns").performClick()
         rule.waitForIdle()
@@ -260,7 +270,7 @@ class InnerDesignsLayoutTest {
             notes,
             SavedStateHandle(),
         )
-        rule.setContent { com.boro.notes.ui.BoroRoot(notesVm, designsVm, com.boro.notes.ui.TasksViewModel(FakeTaskRepository())) }
+        rule.setContent { testRoot(notesVm, designsVm) }
 
         rule.onNodeWithTag("navDesigns").performClick()
         rule.waitForIdle()
@@ -296,7 +306,7 @@ class InnerNotesFullScreenTest {
         val notes = FakeNoteRepository(listOf(Note(id = 1, title = "Tee"), Note(id = 2, title = "Coat")))
         val notesVm = NotesViewModel(notes, SavedStateHandle())
         val designsVm = com.boro.notes.ui.DesignsViewModel(FakeDesignRepository(), notes, SavedStateHandle())
-        rule.setContent { com.boro.notes.ui.BoroRoot(notesVm, designsVm, com.boro.notes.ui.TasksViewModel(FakeTaskRepository())) }
+        rule.setContent { testRoot(notesVm, designsVm) }
 
         // The app opens on Home; the Notes tile goes to the notes list.
         rule.onNodeWithTag(com.boro.notes.ui.TAG_HOME).assertIsDisplayed()
@@ -347,5 +357,185 @@ class TasksLayoutTest {
         rule.onNodeWithTag("todo-add").performClick()
         rule.waitForIdle()
         assertEquals(listOf("Wash indigo"), vm.todos.value.map { it.text })
+    }
+}
+
+/** Tasks on the inner screen: a summary strip instead of a title bar, and the savings list. */
+@RunWith(AndroidJUnit4::class)
+@Config(sdk = [34], qualifiers = "w840dp-h780dp")
+class InnerTasksLayoutTest {
+    @get:Rule val rule = createComposeRule()
+
+    @Test
+    fun savingUpListAddsAndSorts() {
+        val repo = FakeTaskRepository()
+        val vm = com.boro.notes.ui.TasksViewModel(repo) { java.time.LocalDate.of(2026, 11, 26) }
+        rule.setContent { com.boro.notes.ui.TasksScreen(vm, wide = true) }
+
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_TASKS_STRIP).assertExists()
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_WISH_NAME).performTextReplacement("Indigo bolt")
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_WISH_PRICE).performTextReplacement("120")
+        rule.onNodeWithTag("wish-add").performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_WISH_NAME).performTextReplacement("Thimble")
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_WISH_PRICE).performTextReplacement("$8.50")
+        rule.onNodeWithTag("wish-add").performClick()
+        rule.waitForIdle()
+        assertEquals(listOf(12_000L, 850L), vm.wishes.value.map { it.price })
+
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_WISH_SORT).performClick()
+        rule.onNodeWithTag("wish-sort-cheapest").performClick()
+        rule.waitForIdle()
+        assertEquals(listOf("Thimble", "Indigo bolt"), vm.wishes.value.map { it.name })
+    }
+}
+
+@androidx.compose.runtime.Composable
+private fun testRoot(
+    notesVm: NotesViewModel,
+    designsVm: com.boro.notes.ui.DesignsViewModel,
+    journals: FakeJournalRepository = FakeJournalRepository(),
+) = com.boro.notes.ui.BoroRoot(
+    notesVm,
+    designsVm,
+    com.boro.notes.ui.TasksViewModel(FakeTaskRepository()),
+    com.boro.notes.ui.JournalViewModel(journals),
+    com.boro.notes.ui.TrashViewModel(FakeNoteRepository(), FakeDesignRepository(), journals),
+)
+
+/** Journals on the cover screen: the picked book stays closed until opened. */
+@RunWith(AndroidJUnit4::class)
+@Config(sdk = [34], qualifiers = "w360dp-h780dp")
+class CoverJournalLayoutTest {
+    @get:Rule val rule = createComposeRule()
+
+    @Test
+    fun newBookShowsClosedCoverThenOpensHereWithDrawing() {
+        val notes = FakeNoteRepository()
+        val notesVm = NotesViewModel(notes, SavedStateHandle())
+        val designsVm = com.boro.notes.ui.DesignsViewModel(FakeDesignRepository(), notes, SavedStateHandle())
+        val journals = FakeJournalRepository()
+        rule.setContent { testRoot(notesVm, designsVm, journals) }
+
+        // Trash is reachable from Home.
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_HOME_TRASH).performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_TRASH).assertIsDisplayed()
+        rule.onNodeWithTag("trash-back").performClick()
+        rule.waitForIdle()
+
+        rule.onNodeWithTag("tile-journal").performScrollTo().performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_NEW_JOURNAL).performScrollTo().performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_COVER_TITLE).performTextReplacement("Field guide")
+        rule.onNodeWithTag("cover-colour-2").performScrollTo().performClick()
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_COVER_SAVE).performScrollTo().performClick()
+        rule.waitForIdle()
+
+        assertEquals("Field guide", journals.journals.value.single().title)
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_CLOSED_BOOK).assertIsDisplayed()
+        rule.onNodeWithTag("navJournal").assertDoesNotExist()
+
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_OPEN_HERE).performScrollTo().performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_OPEN_BOOK).assertExists()
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_PAGE_TITLE).assertExists()
+
+        // Insert drawing opens the paint overlay; the drawing goes into the page on Insert.
+        rule.onNodeWithTag("insert-drawing").performScrollTo().performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_DRAWING_OVERLAY).assertExists()
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_NOTE_DRAWING).assertDoesNotExist()
+        rule.onNodeWithTag("drawing-insert").performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_DRAWING_OVERLAY).assertDoesNotExist()
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_NOTE_DRAWING).assertExists()
+        // Placed drawings are locked; selecting one offers Edit drawing, which reopens the overlay.
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_NOTE_DRAWING).performScrollTo().performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag("drawing-edit").performScrollTo().performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_DRAWING_OVERLAY).assertExists()
+        rule.onNodeWithTag("drawing-cancel").performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_DRAWING_OVERLAY).assertDoesNotExist()
+    }
+}
+
+/** Journals on the inner screen: pages beside the open page; deleting asks first. */
+@RunWith(AndroidJUnit4::class)
+@Config(sdk = [34], qualifiers = "w840dp-h780dp")
+class InnerJournalLayoutTest {
+    @get:Rule val rule = createComposeRule()
+
+    @Test
+    fun opensBookAndTrashesPageAfterConfirm() {
+        val journals = FakeJournalRepository()
+        kotlinx.coroutines.runBlocking { journals.createJournal("Days", 1, 2) }
+        val vm = com.boro.notes.ui.JournalViewModel(journals)
+        rule.setContent { com.boro.notes.ui.JournalScreen(vm, wide = true) }
+
+        rule.onNodeWithTag("book-1").performClick()
+        rule.waitForIdle()
+        // Unfolded, a book opens straight into book view: two facing pages across the screen.
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_BOOK_SPREAD).assertIsDisplayed()
+        assertTrue(vm.bookView.value)
+
+        // Even an empty book shows two pages ready to write on; both are written in place.
+        rule.onNodeWithTag("spread-title-left").performTextReplacement("Moss walk")
+        rule.onNodeWithTag("spread-title-right").performTextReplacement("Lichen")
+        rule.waitForIdle()
+        rule.onNodeWithTag("spread-date-left").assertIsDisplayed()
+        rule.onNodeWithTag("spread-date-right").assertIsDisplayed()
+
+        // The contents list page titles, and a chapter can start at a page.
+        rule.onNodeWithTag("spread-contents").performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_CONTENTS).assertIsDisplayed()
+        val second = journals.pages.value.maxBy { it.id }
+        rule.onNodeWithTag("start-chapter-${second.id}").performClick()
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_CHAPTER_NAME).performTextReplacement("Autumn")
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_CHAPTER_SAVE).performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag("chapter-${second.id}").assertIsDisplayed()
+        rule.onNodeWithTag("contents-close").performClick()
+        rule.waitForIdle()
+
+        // Leaving book view shows the pages beside the open page.
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_BOOK_VIEW).performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_BOOK_SPREAD).assertDoesNotExist()
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_PAGE_LIST).assertIsDisplayed()
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_BOOK_VIEW).performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_BOOK_SPREAD).assertIsDisplayed()
+
+        // Read only hides the delete controls; tapping again goes back to editing.
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_READ_MODE).performClick()
+        rule.waitForIdle()
+        assertTrue(vm.reading.value)
+        rule.onNodeWithTag("spread-delete-right").assertDoesNotExist()
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_READ_MODE).performClick()
+        rule.waitForIdle()
+
+        // One formatting bar for both pages: it drops down when asked for and folds away again.
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_SPREAD_TOOLBAR).assertDoesNotExist()
+        rule.onNodeWithTag("spread-format").performClick()
+        rule.waitForIdle()
+        rule.onAllNodesWithTag(com.boro.notes.ui.TAG_SPREAD_TOOLBAR).assertCountEquals(1)
+        rule.onNodeWithTag("spread-format").performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_SPREAD_TOOLBAR).assertDoesNotExist()
+
+        rule.onNodeWithTag("spread-delete-right").performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_CONFIRM_DELETE).performClick()
+        rule.waitForIdle()
+
+        val trashed = journals.pages.value.single { it.deletedAt != null }
+        assertEquals("Lichen", trashed.title)
+        val page = journals.pages.value.single { it.deletedAt == null && it.title.isNotBlank() }
+        assertEquals("Moss walk", page.title)
     }
 }
