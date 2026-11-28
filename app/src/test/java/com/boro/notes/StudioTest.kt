@@ -175,4 +175,37 @@ class StudioTest {
         // Drawing on a hidden layer shows it again.
         assertTrue(Pad.editActive(pad) { it }.layers[0].visible)
     }
+
+    @Test
+    fun boardSnapsTurnsTiesYarnAndLaysOutAMosaic() {
+        assertEquals(90f, com.boro.notes.studio.Board.snapTurn(86f), 0f)
+        assertEquals(-180f, com.boro.notes.studio.Board.snapTurn(-176.5f), 0f)
+        assertEquals(30f, com.boro.notes.studio.Board.snapTurn(30f), 0f)
+
+        val photos = (1..5).map { CollageItem("p$it", CollageKind.PHOTO, ref = "$it.jpg", x = it * 0.3f) }
+        val note = CollageItem("n", CollageKind.TEXT, text = "Pocket idea")
+        var c = Collage(photos + note)
+        c = com.boro.notes.studio.Board.setMosaic(c, true)
+        c = c.copy(mosaic = c.mosaic.copy(columns = 2, gap = 0.1f, w = 1.1f, x = 0f, y = 0f))
+        val slots = com.boro.notes.studio.Board.mosaicSlots(c)
+        assertEquals(5, slots.size)
+        assertEquals(0.5f, slots.getValue("p1").w, 1e-5f)
+        assertEquals(0.6f, slots.getValue("p2").x, 1e-5f)
+        assertEquals(0.6f, slots.getValue("p3").y, 1e-5f)
+        assertFalse("n" in slots)
+        // Turning it off leaves the photos where the grid put them.
+        val off = com.boro.notes.studio.Board.setMosaic(c, false)
+        assertEquals(0.6f, off.items.first { it.id == "p2" }.x, 1e-5f)
+        assertTrue(off.items.none { it.inMosaic })
+
+        c = com.boro.notes.studio.Board.toggleLink(c, "p1", "n")
+        assertEquals(1, c.links.size)
+        assertEquals(c, com.boro.notes.studio.Board.toggleLink(c, "n", "n"))
+        assertEquals(0, com.boro.notes.studio.Board.toggleLink(c, "n", "p1").links.size)
+        val gone = com.boro.notes.studio.Board.remove(c, "n")
+        assertTrue(gone.links.isEmpty())
+        assertEquals(c, StudioJson.collage(StudioJson.encode(c)))
+        // Old collages (no yarn, no mosaic) still open.
+        assertEquals(1, StudioJson.collage("""{"items":[{"id":"a","kind":"TEXT"}]}""").items.size)
+    }
 }

@@ -100,6 +100,16 @@ import com.boro.notes.data.Design
 import com.boro.notes.data.Idea
 import com.boro.notes.data.IdeaKind
 import com.boro.notes.studio.Collage
+import androidx.compose.material.icons.filled.Crop
+import androidx.compose.material.icons.filled.ContentCut
+import androidx.compose.material.icons.filled.Timeline
+import androidx.compose.material.icons.filled.GridView
+import com.boro.notes.studio.Board
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.calculateCentroid
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.geometry.Offset
 import com.boro.notes.studio.CollageItem
 import com.boro.notes.studio.CollageKind
 import com.boro.notes.studio.StudioJson
@@ -356,6 +366,23 @@ fun IdeaEditor(draft: IdeaDraft, vm: IdeasViewModel, designs: List<Design>) {
  * Draws a collage. With [onSelect]/[onMove] it's live: tap picks an item, one finger drags it,
  * two fingers resize and turn it; otherwise it's a read-only thumbnail.
  */
+/** A small pill button over the board. */
+@Composable
+private fun BoardChip(text: String, bg: Color, fg: Color, tag: String, onClick: () -> Unit) {
+    Text(
+        text, color = fg, style = MaterialTheme.typography.labelLarge,
+        modifier = Modifier.clip(RoundedCornerShape(50)).background(bg).clickable(onClick = onClick).padding(horizontal = 12.dp, vertical = 6.dp).testTag(tag),
+    )
+}
+
+/** The red of the yarn tied between board items. */
+private val YARN = Color(0xFFB3261E)
+
+/**
+ * A collage board. In the editor ([onSelect] and [onMove] given) it's endless: one finger on the
+ * paper pans, two fingers zoom, and items drag, pinch and turn (snapping to right angles). As a
+ * thumbnail it fits everything in.
+ */
 @Composable
 fun CollageView(
     collage: Collage,
@@ -367,68 +394,165 @@ fun CollageView(
     onSelect: ((String?) -> Unit)? = null,
     onGestureStart: () -> Unit = {},
     onMove: ((CollageItem) -> Unit)? = null,
+    onMoveMosaic: ((Float, Float, Float) -> Unit)? = null,
+    zoom: Float = 1f,
+    pan: Offset = Offset.Zero,
+    onView: ((Float, Offset) -> Unit)? = null,
 ) {
     val paper = Color(collage.paper ?: 0xFFF6EFDF)
+    val editing = onSelect != null && onMove != null
+    val currentZoom by rememberUpdatedState(zoom)
+    val currentPan by rememberUpdatedState(pan)
     BoxWithConstraints(
         modifier
             .clipToBounds()
             .background(paper)
-            .then(if (onSelect != null) Modifier.pointerInput(Unit) { detectTapGestures { onSelect(null) } } else Modifier),
+            .then(
+                if (onSelect != null) Modifier.pointerInput(Unit) {
+                    // The paper: tap clears the pick, one finger pans, two fingers zoom.
+                    awaitEachGesture {
+                        val down = awaitFirstDown()
+                        var moved = false
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            if (event.changes.none { it.pressed }) break
+                            if (event.changes.any { it.isConsumed }) continue
+                            val move = event.calculatePan()
+                            val scale = event.calculateZoom()
+                            if (!moved && (event.changes.first().position - down.position).getDistance() < viewConfiguration.touchSlop && scale == 1f) continue
+                            moved = true
+                            val z = currentZoom
+                            val newZoom = (z * scale).coerceIn(0.15f, 4f)
+                            val centroid = event.calculateCentroid()
+                            val k = newZoom / z
+                            onView?.invoke(newZoom, centroid - (centroid - currentPan) * k + move)
+                            event.changes.forEach { it.consume() }
+                        }
+                        if (!moved) onSelect(null)
+                    }
+                } else Modifier,
+            ),
     ) {
         val boardPx = with(LocalDensity.current) { maxWidth.toPx() }
         val board = maxWidth
-        collage.items.forEach { item -> key(item.id) {
-            val latest by rememberUpdatedState(item)
-            val isSelected = item.id == selected
-            Box(
-                Modifier
-                    .offset { IntOffset((item.x * boardPx).roundToInt(), (item.y * boardPx).roundToInt()) }
-                    .width(board * item.w)
-                    .then(
-                        if (onSelect != null && onMove != null) Modifier.pointerInput(item.id, boardPx) {
-                            awaitEachGesture {
-                                val down = awaitFirstDown()
-                                onSelect(latest.id)
-                                down.consume()
-                                var started = false
-                                while (true) {
-                                    val event = awaitPointerEvent()
-                                    if (event.changes.none { it.pressed }) break
-                                    val pan = event.calculatePan()
-                                    val zoom = event.calculateZoom()
-                                    val turn = event.calculateRotation()
-                                    if (pan == androidx.compose.ui.geometry.Offset.Zero && zoom == 1f && turn == 0f) continue
-                                    if (!started) { started = true; onGestureStart() }
-                                    val cur = latest
-                                    onMove(
-                                        cur.copy(
-                                            x = (cur.x + pan.x / boardPx).coerceIn(-cur.w * 0.8f, 0.95f),
-                                            y = (cur.y + pan.y / boardPx).coerceIn(-0.2f, 0.95f),
-                                            w = (cur.w * zoom).coerceIn(0.08f, 1.2f),
-                                            rot = cur.rot + turn,
-                                        )
-                                    )
-                                    event.changes.forEach { it.consume() }
+        val slots = remember(collage) { Board.mosaicSlots(collage) }
+        // A thumbnail fits everything; the editor uses its own zoom and pan.
+        val (viewZoom, viewPan) = if (editing) zoom to pan else {
+            val b = remember(collage) { Board.bounds(collage) }
+            val aspect = with(LocalDensity.current) { maxHeight.toPx() } / boardPx
+            val z = minOf(1f / b.w, aspect / b.h)
+            z to Offset(-b.x * z * boardPx, -b.y * z * boardPx)
+        }
+        Box(
+            Modifier.matchParentSize().graphicsLayer {
+                transformOrigin = TransformOrigin(0f, 0f)
+                scaleX = viewZoom
+                scaleY = viewZoom
+                translationX = viewPan.x
+                translationY = viewPan.y
+            },
+        ) {
+            collage.items.forEach { item -> key(item.id) {
+                val latest by rememberUpdatedState(item)
+                val slot = slots[item.id]
+                val isSelected = item.id == selected
+                val x = slot?.x ?: item.x
+                val y = slot?.y ?: item.y
+                val w = slot?.w ?: item.w
+                Box(
+                    Modifier
+                        .offset { IntOffset((x * boardPx).roundToInt(), (y * boardPx).roundToInt()) }
+                        .width(board * w)
+                        .then(
+                            if (editing) Modifier.pointerInput(item.id, boardPx, slot != null) {
+                                awaitEachGesture {
+                                    val down = awaitFirstDown()
+                                    onSelect!!(latest.id)
+                                    down.consume()
+                                    var started = false
+                                    var rawRot = latest.rot
+                                    while (true) {
+                                        val event = awaitPointerEvent()
+                                        if (event.changes.none { it.pressed }) break
+                                        val drag = event.calculatePan()
+                                        val scale = event.calculateZoom()
+                                        val turn = event.calculateRotation()
+                                        if (drag == Offset.Zero && scale == 1f && turn == 0f) continue
+                                        if (!started) { started = true; onGestureStart() }
+                                        val cur = latest
+                                        if (cur.inMosaic && cur.kind == CollageKind.PHOTO && onMoveMosaic != null && slots.isNotEmpty()) {
+                                            // A photo in the mosaic moves (and pinch-resizes) the whole grid.
+                                            onMoveMosaic(drag.x / boardPx, drag.y / boardPx, scale)
+                                        } else {
+                                            rawRot += turn
+                                            onMove!!(
+                                                cur.copy(
+                                                    x = cur.x + drag.x / boardPx,
+                                                    y = cur.y + drag.y / boardPx,
+                                                    w = (cur.w * scale).coerceIn(0.05f, 3f),
+                                                    rot = Board.snapTurn(rawRot),
+                                                )
+                                            )
+                                        }
+                                        event.changes.forEach { it.consume() }
+                                    }
                                 }
-                            }
-                        } else Modifier
-                    )
-                    .rotate(item.rot)
-                    .then(if (isSelected) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(4.dp)) else Modifier)
-                    .testTag("collage-item-${item.id}"),
-            ) {
-                CollageItemContent(item, ideas, designs, board, depth)
+                            } else Modifier
+                        )
+                        .rotate(if (slot != null) 0f else item.rot)
+                        .then(if (isSelected) Modifier.border(2.dp / viewZoom.coerceAtLeast(0.2f), MaterialTheme.colorScheme.primary, RoundedCornerShape(4.dp)) else Modifier)
+                        .testTag("collage-item-${item.id}"),
+                ) {
+                    CollageItemContent(item, ideas, designs, board, depth, tile = slot?.let { it.h / it.w })
+                }
+            } }
+            // Red yarn over everything, pinned at the top of each item, sagging a little.
+            if (collage.links.isNotEmpty()) {
+                Canvas(Modifier.matchParentSize()) {
+                    val byId = collage.items.associateBy { it.id }
+                    fun pin(id: String): Offset? {
+                        val it = byId[id] ?: return null
+                        val s = slots[id]
+                        val x = (s?.x ?: it.x) + (s?.w ?: it.w) / 2
+                        val y = (s?.y ?: it.y) + 0.012f
+                        return Offset(x * boardPx, y * boardPx)
+                    }
+                    val stroke = 2.2.dp.toPx() / viewZoom.coerceAtLeast(0.3f)
+                    collage.links.forEach { link ->
+                        val a = pin(link.from) ?: return@forEach
+                        val b = pin(link.to) ?: return@forEach
+                        val mid = (a + b) / 2f
+                        val sag = (b - a).getDistance() * 0.12f
+                        val path = androidx.compose.ui.graphics.Path().apply {
+                            moveTo(a.x, a.y)
+                            quadraticTo(mid.x, mid.y + sag, b.x, b.y)
+                        }
+                        drawPath(path, YARN, style = androidx.compose.ui.graphics.drawscope.Stroke(stroke, cap = androidx.compose.ui.graphics.StrokeCap.Round))
+                    }
+                    collage.links.flatMap { listOf(it.from, it.to) }.distinct().forEach { id ->
+                        val p = pin(id) ?: return@forEach
+                        drawCircle(Color(0xFF7A1A14), stroke * 2.2f, p)
+                        drawCircle(Color.White.copy(alpha = 0.5f), stroke * 0.8f, p - Offset(stroke * 0.6f, stroke * 0.6f))
+                    }
+                }
             }
-        } }
+        }
     }
 }
 
 @Composable
-private fun CollageItemContent(item: CollageItem, ideas: List<Idea>, designs: List<Design>, board: Dp, depth: Int) {
+private fun CollageItemContent(item: CollageItem, ideas: List<Idea>, designs: List<Design>, board: Dp, depth: Int, tile: Float? = null) {
     when (item.kind) {
         CollageKind.PHOTO -> {
             val bitmap = rememberStoredImage(item.ref)
-            if (bitmap != null) {
+            if (tile != null) {
+                // A mosaic tile: cropped to the grid's shape.
+                if (bitmap != null) {
+                    androidx.compose.foundation.Image(bitmap, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxWidth().aspectRatio(1f / tile))
+                } else {
+                    Box(Modifier.fillMaxWidth().aspectRatio(1f / tile).background(Color.Black.copy(alpha = 0.08f)))
+                }
+            } else if (bitmap != null) {
                 androidx.compose.foundation.Image(
                     bitmap, null, contentScale = ContentScale.FillWidth,
                     modifier = Modifier.fillMaxWidth().aspectRatio(bitmap.width.toFloat() / bitmap.height.coerceAtLeast(1)),
@@ -444,7 +568,9 @@ private fun CollageItemContent(item: CollageItem, ideas: List<Idea>, designs: Li
                 idea.kind == IdeaKind.COLLAGE && depth >= 1 -> Box(Modifier.fillMaxWidth().aspectRatio(1f).background(Color.Black.copy(alpha = 0.08f)))
                 else -> IdeaThumbnail(
                     idea, ideas, designs,
-                    Modifier.fillMaxWidth().aspectRatio(if (idea.kind == IdeaKind.SKETCH) 0.75f else 1f).border(0.5.dp, Color.Black.copy(alpha = 0.15f)),
+                    Modifier.fillMaxWidth().aspectRatio(
+                        if (idea.kind == IdeaKind.SKETCH) remember(idea.content) { StudioJson.pad(idea.content).let { it.padW / it.padH } } else 1f,
+                    ).border(0.5.dp, Color.Black.copy(alpha = 0.15f)),
                     depth = depth + 1,
                 )
             }
@@ -465,7 +591,10 @@ private fun CollageItemContent(item: CollageItem, ideas: List<Idea>, designs: Li
     }
 }
 
-/** A collage editor: a square board where photos, sketches, designs and notes are pinned up. */
+/**
+ * A collage editor: an endless board where photos, sketches, designs and sticky notes are pinned up,
+ * tied together with red yarn, and photos can snap into a mosaic.
+ */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun CollageEditor(draft: IdeaDraft, vm: IdeasViewModel, collections: List<String>, designs: List<Design>) {
@@ -473,16 +602,28 @@ private fun CollageEditor(draft: IdeaDraft, vm: IdeasViewModel, collections: Lis
     val ideas by vm.ideas.collectAsStateWithLifecycle()
     var selected by remember { mutableStateOf<String?>(null) }
     var picking by remember { mutableStateOf<CollageKind?>(null) }
+    var pickIdeas by remember { mutableStateOf(IdeaKind.SKETCH) }
     var editingText by remember { mutableStateOf<CollageItem?>(null) }
+    /** The item yarn is being tied from; the next item tapped gets the other end. */
+    var tyingFrom by remember { mutableStateOf<String?>(null) }
+    var zoom by remember(draft.idea.id) { mutableStateOf(1f) }
+    var pan by remember(draft.idea.id) { mutableStateOf(Offset.Zero) }
     val collage = draft.collage
     val selectedItem = collage.items.firstOrNull { it.id == selected }
+    /** The board's size on screen in px (width, height), so new things land in view. */
+    val viewPx = remember { floatArrayOf(1f, 1f) }
 
     fun add(kind: CollageKind, ref: String = "", text: String = "", w: Float = 0.42f) {
         val n = collage.items.size
+        // Drop new things near the middle of what's on screen, fanned out a little.
+        val vw = viewPx[0].coerceAtLeast(1f)
+        val cx = (vw * 0.5f - pan.x) / zoom / vw
+        val cy = (viewPx[1] * 0.45f - pan.y) / zoom / vw
         val item = CollageItem(
             id = UUID.randomUUID().toString(), kind = kind, ref = ref, text = text,
-            x = 0.08f + (n % 5) * 0.07f, y = 0.08f + (n % 4) * 0.08f, w = w,
+            x = cx - w / 2 + (n % 5 - 2) * 0.04f, y = cy - w / 2 + (n % 4 - 1.5f) * 0.04f, w = w,
             rot = listOf(-4f, 3f, -2f, 5f, 0f)[n % 5],
+            inMosaic = kind == CollageKind.PHOTO && collage.mosaic.on,
         )
         vm.changeCollage { it.copy(items = it.items + item) }
         selected = item.id
@@ -493,19 +634,46 @@ private fun CollageEditor(draft: IdeaDraft, vm: IdeasViewModel, collections: Lis
     Surface(Modifier.fillMaxSize().testTag(TAG_COLLAGE), color = cs.surface) {
         Column(Modifier.fillMaxSize()) {
             IdeaHeader(draft, vm, collections, what = "collage")
-            BoxWithConstraints(
-                Modifier.weight(1f).fillMaxWidth().background(cs.surfaceContainerHighest.copy(alpha = 0.5f)),
-                contentAlignment = Alignment.Center,
-            ) {
-                val side = minOf(maxWidth, maxHeight) - 12.dp
-                CollageView(
-                    collage, ideas, designs,
-                    Modifier.size(side).clip(RoundedCornerShape(6.dp)),
-                    selected = selected,
-                    onSelect = { selected = it },
-                    onGestureStart = vm::checkpoint,
-                    onMove = { vm.updateItem(it) },
-                )
+            Box(Modifier.weight(1f).fillMaxWidth()) {
+                val dens = LocalDensity.current
+                BoxWithConstraints(Modifier.fillMaxSize()) {
+                    viewPx[0] = with(dens) { maxWidth.toPx() }
+                    viewPx[1] = with(dens) { maxHeight.toPx() }
+                    CollageView(
+                        collage, ideas, designs,
+                        Modifier.fillMaxSize(),
+                        selected = selected,
+                        onSelect = { id ->
+                            val from = tyingFrom
+                            if (from != null && id != null && id != from) {
+                                vm.changeCollage { Board.toggleLink(it, from, id) }
+                                tyingFrom = null
+                                selected = id
+                            } else {
+                                if (id == null) tyingFrom = null
+                                selected = id
+                            }
+                        },
+                        onGestureStart = vm::checkpoint,
+                        onMove = { vm.updateItem(it) },
+                        onMoveMosaic = { dx, dy, scale ->
+                            vm.changeCollage(record = false) { c ->
+                                c.copy(mosaic = c.mosaic.copy(x = c.mosaic.x + dx, y = c.mosaic.y + dy, w = (c.mosaic.w * scale).coerceIn(0.2f, 6f)))
+                            }
+                        },
+                        zoom = zoom,
+                        pan = pan,
+                        onView = { z, p -> zoom = z; pan = p },
+                    )
+                }
+                Row(Modifier.align(Alignment.TopEnd).padding(10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (tyingFrom != null) {
+                        BoardChip("Tap what to tie it to · Cancel", YARN, Color.White, "collage-tying") { tyingFrom = null }
+                    }
+                    if (zoom != 1f || pan != Offset.Zero) {
+                        BoardChip("${(zoom * 100).roundToInt()}% · Back to start", cs.inverseSurface, cs.inverseOnSurface, "collage-view-reset") { zoom = 1f; pan = Offset.Zero }
+                    }
+                }
             }
             FlowRow(
                 Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 8.dp, vertical = 6.dp),
@@ -514,14 +682,16 @@ private fun CollageEditor(draft: IdeaDraft, vm: IdeasViewModel, collections: Lis
             ) {
                 // Add things: one popup.
                 ToolGroup(cs.primaryContainer, cs.onPrimaryContainer) {
-                    ToolPopup(Icons.Filled.Add, "Add to the collage", "collage-add") { close ->
-                        PopupSection("Photo") {}
+                    ToolPopup(Icons.Filled.Add, "Add to the board", "collage-add") { close ->
+                        PopupSection(if (collage.mosaic.on) "Photo · joins the mosaic" else "Photo") {}
                         ActionRow(Icons.Filled.PhotoCamera, "Take a photo", "collage-camera") { close(); photos.camera() }
                         ActionRow(Icons.Filled.PhotoLibrary, "From gallery", "collage-photo") { close(); photos.gallery() }
                         PopupSection("Saved") {}
-                        ActionRow(Icons.Filled.Collections, "A saved idea", "collage-idea") { close(); picking = CollageKind.IDEA }
+                        ActionRow(Icons.Filled.Brush, "A sketch", "collage-sketch") { close(); pickIdeas = IdeaKind.SKETCH; picking = CollageKind.IDEA }
+                        ActionRow(Icons.Filled.Collections, "Another collage", "collage-idea") { close(); pickIdeas = IdeaKind.COLLAGE; picking = CollageKind.IDEA }
                         ActionRow(Icons.Filled.Checkroom, "A design", "collage-design") { close(); picking = CollageKind.DESIGN }
-                        ActionRow(Icons.Filled.TextFields, "A note", "collage-text") { close(); editingText = CollageItem(id = "", kind = CollageKind.TEXT) }
+                        PopupSection("Write") {}
+                        ActionRow(Icons.Filled.TextFields, "A sticky note", "collage-text") { close(); editingText = CollageItem(id = "", kind = CollageKind.TEXT) }
                     }
                 }
                 // The picked item: one popup with everything it can do.
@@ -539,26 +709,67 @@ private fun CollageEditor(draft: IdeaDraft, vm: IdeasViewModel, collections: Lis
                                 }
                                 ActionRow(Icons.Filled.Edit, "Edit note", "collage-edit") { close(); editingText = selectedItem }
                             }
-                            ActionRow(Icons.Filled.FlipToFront, "Bring to front", "collage-front") {
+                            val tied = collage.links.count { it.from == selectedItem.id || it.to == selectedItem.id }
+                            ActionRow(Icons.Filled.Timeline, "Tie red yarn to…", "collage-link") { close(); tyingFrom = selectedItem.id }
+                            if (tied > 0) {
+                                ActionRow(Icons.Filled.ContentCut, "Cut its yarn ($tied)", "collage-unlink") {
+                                    vm.changeCollage { c -> c.copy(links = c.links.filter { it.from != selectedItem.id && it.to != selectedItem.id }) }
+                                }
+                            }
+                            if (selectedItem.kind == CollageKind.PHOTO && collage.mosaic.on) {
+                                ToggleRow("In the mosaic", "Off lets it sit anywhere", selectedItem.inMosaic, "collage-in-mosaic") { on ->
+                                    vm.updateItem(selectedItem.copy(inMosaic = on, rot = 0f), record = true)
+                                }
+                            }
+                            if (selectedItem.kind != CollageKind.PHOTO || !selectedItem.inMosaic || !collage.mosaic.on) {
+                                ActionRow(Icons.Filled.Crop, "Straighten (turn to 0°)", "collage-straight", enabled = selectedItem.rot != 0f) {
+                                    vm.updateItem(selectedItem.copy(rot = 0f), record = true)
+                                }
+                            }
+                            ActionRow(Icons.Filled.FlipToFront, if (selectedItem.inMosaic && collage.mosaic.on) "Move to the end" else "Bring to front", "collage-front") {
                                 vm.changeCollage { c -> c.copy(items = c.items.filter { it.id != selectedItem.id } + selectedItem) }
                             }
-                            ActionRow(Icons.Filled.FlipToBack, "Send to back", "collage-back") {
+                            ActionRow(Icons.Filled.FlipToBack, if (selectedItem.inMosaic && collage.mosaic.on) "Move to the start" else "Send to back", "collage-back") {
                                 vm.changeCollage { c -> c.copy(items = listOf(selectedItem) + c.items.filter { it.id != selectedItem.id }) }
                             }
-                            ActionRow(Icons.Filled.Delete, "Remove from collage", "collage-remove") {
+                            ActionRow(Icons.Filled.Delete, "Remove from board", "collage-remove") {
                                 close()
-                                vm.changeCollage { c -> c.copy(items = c.items.filter { it.id != selectedItem.id }) }
+                                vm.changeCollage { Board.remove(it, selectedItem.id) }
                                 selected = null
                             }
                         }
                     }
                 }
-                // The board.
+                // The board: paper and the mosaic.
                 ToolGroup(cs.tertiaryContainer, cs.onTertiaryContainer) {
                     ToolPopup(Icons.Filled.Palette, "Board", "collage-paper", accent = Color(collage.paper ?: 0xFFF6EFDF)) { _ ->
                         PopupSection("Paper") {
                             ColourDots(BOARD_PAPERS.map { it.second }, collage.paper ?: 0xFFF6EFDF, "board") { c ->
                                 vm.changeCollage { it.copy(paper = c) }
+                            }
+                        }
+                    }
+                    ToolPopup(Icons.Filled.GridView, "Mosaic", "collage-mosaic", selected = collage.mosaic.on) { _ ->
+                        val m = collage.mosaic
+                        ToggleRow("Mosaic for photos", "Photos line up in a grid; drag one to move the whole grid", m.on, "collage-mosaic-on") { on ->
+                            vm.changeCollage { Board.setMosaic(it, on) }
+                        }
+                        PopupSection("Columns") {
+                            val cols = listOf(2, 3, 4, 5, 6)
+                            ChoiceChips(cols.map { "$it" }, cols.indexOf(m.columns), "collage-mosaic-cols") { i ->
+                                vm.changeCollage { c -> Board.setMosaic(c, true).let { it.copy(mosaic = it.mosaic.copy(columns = cols[i])) } }
+                            }
+                        }
+                        PopupSection("Gap") {
+                            val gaps = listOf("None" to 0f, "Thin" to 0.01f, "Wide" to 0.03f)
+                            ChoiceChips(gaps.map { it.first }, gaps.indexOfFirst { it.second == m.gap }, "collage-mosaic-gap") { i ->
+                                vm.changeCollage { c -> Board.setMosaic(c, true).let { it.copy(mosaic = it.mosaic.copy(gap = gaps[i].second)) } }
+                            }
+                        }
+                        PopupSection("Tiles") {
+                            val shapes = listOf("Square" to 1f, "Tall" to 4f / 3f, "Wide" to 3f / 4f)
+                            ChoiceChips(shapes.map { it.first }, shapes.indexOfFirst { it.second == m.shape }, "collage-mosaic-shape") { i ->
+                                vm.changeCollage { c -> Board.setMosaic(c, true).let { it.copy(mosaic = it.mosaic.copy(shape = shapes[i].second)) } }
                             }
                         }
                     }
@@ -568,7 +779,7 @@ private fun CollageEditor(draft: IdeaDraft, vm: IdeasViewModel, collections: Lis
             }
             if (collage.isEmpty) {
                 Text(
-                    "Add photos, saved ideas, designs and notes. Drag with one finger; pinch to resize and turn.",
+                    "Add photos, sketches, designs and sticky notes. Drag the paper to move around, pinch to zoom; drag things with one finger, pinch to resize and turn.",
                     style = MaterialTheme.typography.bodySmall,
                     color = cs.onSurfaceVariant,
                     modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 8.dp).navigationBarsPadding(),
@@ -578,12 +789,21 @@ private fun CollageEditor(draft: IdeaDraft, vm: IdeasViewModel, collections: Lis
     }
 
     picking?.let { kind ->
+        val isIdea = kind == CollageKind.IDEA
         PickerDialog(
-            title = if (kind == CollageKind.IDEA) "Add a saved idea" else "Add a design",
-            entries = if (kind == CollageKind.IDEA) {
-                ideas.filter { it.id != draft.idea.id }.map { it.id to it.title.ifBlank { if (it.kind == IdeaKind.SKETCH) "Sketch" else "Collage" } }
+            title = when {
+                !isIdea -> "Add a design"
+                pickIdeas == IdeaKind.SKETCH -> "Add a sketch"
+                else -> "Add a collage"
+            },
+            entries = if (isIdea) {
+                ideas.filter { it.id != draft.idea.id && it.kind == pickIdeas }.map { it.id to it.title.ifBlank { if (it.kind == IdeaKind.SKETCH) "Sketch" else "Collage" } }
             } else designs.map { it.id to it.name.ifBlank { "Untitled design" } },
-            empty = if (kind == CollageKind.IDEA) "No other ideas saved yet." else "No designs yet.",
+            empty = when {
+                !isIdea -> "No designs yet."
+                pickIdeas == IdeaKind.SKETCH -> "No sketches yet. Make one from the Sketch board's + button."
+                else -> "No other collages yet."
+            },
             onPick = { id -> add(kind, ref = id.toString(), w = 0.34f) },
             onDismiss = { picking = null },
         )

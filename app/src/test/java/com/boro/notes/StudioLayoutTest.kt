@@ -16,6 +16,7 @@ import com.boro.notes.ui.NotesViewModel
 import com.boro.notes.ui.ProjectsViewModel
 import com.boro.notes.ui.TAG_BACK
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -146,7 +147,7 @@ class InnerStudioLayoutTest {
         rule.onNodeWithTag(com.boro.notes.ui.TAG_COLLAGE).assertIsDisplayed()
         rule.onNodeWithTag("collage-add").performClick()
         rule.waitForIdle()
-        rule.onNodeWithTag("collage-idea").performClick()
+        rule.onNodeWithTag("collage-sketch").performClick()
         rule.waitForIdle()
         rule.onNodeWithTag("pick-1").performClick()
         rule.waitForIdle()
@@ -154,5 +155,13 @@ class InnerStudioLayoutTest {
         assertEquals(1, items.size)
         rule.onNodeWithTag("collage-item-${items.single().id}").assertExists()
         rule.onNodeWithTag("collage-selected").assertIsDisplayed()
+        // The board's own popups: mosaic settings.
+        rule.onNodeWithTag("collage-mosaic").performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag("collage-mosaic-on").assertIsDisplayed()
+        rule.onNodeWithTag("collage-mosaic-cols-2").performClick()
+        rule.waitForIdle()
+        assertEquals(4, ideasVm.open.value!!.collage.mosaic.columns)
+        assertTrue(ideasVm.open.value!!.collage.mosaic.on)
     }
 }

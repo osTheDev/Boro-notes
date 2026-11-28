@@ -101,11 +101,99 @@ data class CollageItem(
     val rot: Float = 0f,
     /** Text note colour (ARGB). */
     val color: Long = 0xFFF3E3A6,
+    /** A photo laid out in the collage's [Mosaic] grid instead of where it was dropped. */
+    val inMosaic: Boolean = false,
 )
 
+/** Red yarn tied between two items, conspiracy-board style. */
 @Serializable
-data class Collage(val items: List<CollageItem> = emptyList(), val paper: Long? = null) {
+data class CollageLink(val from: String, val to: String)
+
+/**
+ * A grid that photos snap into: [columns] across, [gap] between tiles, each tile [shape] tall per
+ * unit wide. The grid's top-left is ([x], [y]) and it is [w] wide (board units).
+ */
+@Serializable
+data class Mosaic(
+    val on: Boolean = false,
+    val columns: Int = 3,
+    val gap: Float = 0.01f,
+    val shape: Float = 1f,
+    val x: Float = 0.05f,
+    val y: Float = 0.05f,
+    val w: Float = 0.9f,
+)
+
+/**
+ * An endless board. Units are board widths: 1.0 is the width of the screen at 100%, and items can
+ * sit anywhere (negative or far out), so the board grows as you add to it.
+ */
+@Serializable
+data class Collage(
+    val items: List<CollageItem> = emptyList(),
+    val paper: Long? = null,
+    val links: List<CollageLink> = emptyList(),
+    val mosaic: Mosaic = Mosaic(),
+) {
     val isEmpty get() = items.isEmpty()
+}
+
+/** A tile in the mosaic, in board units. */
+data class Slot(val x: Float, val y: Float, val w: Float, val h: Float)
+
+/** Plain board logic for collages (tested in StudioTest). */
+object Board {
+    /** Turning snaps to the nearest right angle when it's within [within] degrees of one. */
+    fun snapTurn(rot: Float, within: Float = 6f): Float {
+        val nearest = Math.round(rot / 90f) * 90f
+        return if (kotlin.math.abs(rot - nearest) <= within) nearest else rot
+    }
+
+    /** Where each mosaic photo sits, in list order, while the mosaic is on. */
+    fun mosaicSlots(c: Collage): Map<String, Slot> {
+        val m = c.mosaic
+        if (!m.on) return emptyMap()
+        val cols = m.columns.coerceIn(1, 8)
+        val tileW = ((m.w - m.gap * (cols - 1)) / cols).coerceAtLeast(0.01f)
+        val tileH = tileW * m.shape
+        return c.items.filter { it.kind == CollageKind.PHOTO && it.inMosaic }.withIndex().associate { (i, item) ->
+            item.id to Slot(m.x + (i % cols) * (tileW + m.gap), m.y + (i / cols) * (tileH + m.gap), tileW, tileH)
+        }
+    }
+
+    /** Turns the mosaic on (every photo joins it) or off (photos stay where the grid put them). */
+    fun setMosaic(c: Collage, on: Boolean): Collage {
+        if (on == c.mosaic.on) return c
+        if (on) return c.copy(mosaic = c.mosaic.copy(on = true), items = c.items.map { if (it.kind == CollageKind.PHOTO) it.copy(inMosaic = true) else it })
+        val slots = mosaicSlots(c)
+        return c.copy(
+            mosaic = c.mosaic.copy(on = false),
+            items = c.items.map { item -> slots[item.id]?.let { s -> item.copy(x = s.x, y = s.y, w = s.w, rot = 0f, inMosaic = false) } ?: item },
+        )
+    }
+
+    /** Ties yarn between [a] and [b], or cuts it if they're already tied. */
+    fun toggleLink(c: Collage, a: String, b: String): Collage {
+        if (a == b) return c
+        val existing = c.links.firstOrNull { (it.from == a && it.to == b) || (it.from == b && it.to == a) }
+        return c.copy(links = if (existing != null) c.links - existing else c.links + CollageLink(a, b))
+    }
+
+    /** Takes an item off the board, with any yarn tied to it. */
+    fun remove(c: Collage, id: String): Collage =
+        c.copy(items = c.items.filter { it.id != id }, links = c.links.filter { it.from != id && it.to != id })
+
+    /** The area everything covers (at least the first screen), for fitting a thumbnail. Heights are guessed as square. */
+    fun bounds(c: Collage): Slot {
+        val slots = mosaicSlots(c)
+        var minX = 0f; var minY = 0f; var maxX = 1f; var maxY = 1f
+        c.items.forEach { item ->
+            val s = slots[item.id] ?: Slot(item.x, item.y, item.w, item.w)
+            minX = minOf(minX, s.x); minY = minOf(minY, s.y)
+            maxX = maxOf(maxX, s.x + s.w); maxY = maxOf(maxY, s.y + s.h)
+        }
+        return Slot(minX, minY, maxX - minX, maxY - minY)
+    }
 }
 
 object StudioJson {
