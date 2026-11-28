@@ -3,6 +3,8 @@ package com.boro.notes.ui
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Matrix
+import android.media.ExifInterface
 import android.net.Uri
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
@@ -72,13 +74,51 @@ suspend fun importImage(context: Context, uri: Uri): String? = withContext(Dispa
         context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
         var sample = 1
         while (max(bounds.outWidth, bounds.outHeight) / sample > 2048) sample *= 2
-        val bitmap = context.contentResolver.openInputStream(uri)?.use {
+        val decoded = context.contentResolver.openInputStream(uri)?.use {
             BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = sample })
         } ?: return@runCatching null
+        // Cameras save photos sideways and note the turn in EXIF; bake it in so the photo stands upright.
+        val orientation = runCatching {
+            context.contentResolver.openInputStream(uri)?.use {
+                ExifInterface(it).getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
+            }
+        }.getOrNull() ?: ExifInterface.ORIENTATION_NORMAL
+        val bitmap = upright(decoded, orientation)
         val name = "${UUID.randomUUID()}.jpg"
         File(imagesDir(context), name).outputStream().use { bitmap.compress(Bitmap.CompressFormat.JPEG, 88, it) }
         name
     }.getOrNull()
+}
+
+private fun upright(b: Bitmap, orientation: Int): Bitmap {
+    val m = Matrix()
+    when (orientation) {
+        ExifInterface.ORIENTATION_ROTATE_90 -> m.postRotate(90f)
+        ExifInterface.ORIENTATION_ROTATE_180 -> m.postRotate(180f)
+        ExifInterface.ORIENTATION_ROTATE_270 -> m.postRotate(270f)
+        ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> m.postScale(-1f, 1f)
+        ExifInterface.ORIENTATION_FLIP_VERTICAL -> m.postScale(1f, -1f)
+        ExifInterface.ORIENTATION_TRANSPOSE -> { m.postRotate(90f); m.postScale(-1f, 1f) }
+        ExifInterface.ORIENTATION_TRANSVERSE -> { m.postRotate(270f); m.postScale(-1f, 1f) }
+        else -> return b
+    }
+    return Bitmap.createBitmap(b, 0, 0, b.width, b.height, m, true)
+}
+
+/** Saves a copy of a stored photo turned a quarter ([clockwise] or not). Returns the new file name. */
+suspend fun rotateStoredImage(context: Context, name: String, clockwise: Boolean): String? = withContext(Dispatchers.IO) {
+    runCatching {
+        val src = BitmapFactory.decodeFile(File(imagesDir(context), name).path) ?: return@runCatching null
+        val turned = Bitmap.createBitmap(src, 0, 0, src.width, src.height, Matrix().apply { postRotate(if (clockwise) 90f else -90f) }, true)
+        val out = "${UUID.randomUUID()}.jpg"
+        File(imagesDir(context), out).outputStream().use { turned.compress(Bitmap.CompressFormat.JPEG, 90, it) }
+        out
+    }.getOrNull()
+}
+
+/** Removes a stored photo file nothing points at any more. */
+fun deleteStoredImage(context: Context, name: String) {
+    runCatching { File(imagesDir(context), name).delete() }
 }
 
 internal fun loadImage(context: Context, name: String): ImageBitmap? = runCatching {

@@ -63,7 +63,7 @@ data class ProjectTodo(val text: String, val done: Boolean = false)
 @Serializable
 data class Material(
     val name: String = "",
-    /** Fabric, Thread, Hardware or Other. */
+    /** A [MaterialKind] label: Fabric, Hardware or Notions. */
     val kind: String = "Fabric",
     val weight: String = "",
     val weave: String = "",
@@ -86,6 +86,28 @@ data class PhotoPin(val x: Float, val y: Float, val text: String)
 /** A finger mark on a photo; points are x,y pairs as fractions of the photo's width and height. */
 @Serializable
 data class PhotoMark(val color: Long, val width: Float, val points: List<Float>)
+
+/** Where a point on a photo (fractions of width and height) lands after the photo turns a quarter. */
+fun turnPoint(x: Float, y: Float, clockwise: Boolean): Pair<Float, Float> =
+    if (clockwise) (1f - y) to x else y to (1f - x)
+
+fun PhotoPin.turned(clockwise: Boolean): PhotoPin = turnPoint(x, y, clockwise).let { (nx, ny) -> copy(x = nx, y = ny) }
+
+fun PhotoMark.turned(clockwise: Boolean): PhotoMark =
+    copy(points = points.chunked(2).flatMap { if (it.size == 2) turnPoint(it[0], it[1], clockwise).toList() else emptyList() })
+
+/** Material categories, each with its own fields. Older "Thread" and "Other" entries count as notions. */
+enum class MaterialKind(val label: String) {
+    FABRIC("Fabric"), HARDWARE("Hardware"), NOTIONS("Notions");
+
+    companion object {
+        fun of(kind: String): MaterialKind = when (kind) {
+            "Fabric" -> FABRIC
+            "Hardware" -> HARDWARE
+            else -> NOTIONS
+        }
+    }
+}
 
 object ProjectJson {
     private val json = Json { ignoreUnknownKeys = true }

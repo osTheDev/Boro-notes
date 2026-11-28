@@ -8,6 +8,38 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Text
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -146,31 +178,166 @@ fun padPath(s: PadStroke, w: Float): Path {
     }
 }
 
-/** Draws a sketch's fills, then its strokes, on a pad [size.width] px wide. */
-fun DrawScope.drawPadStrokes(strokes: List<PadStroke>) {
-    val w = size.width
-    val scale = w / 360f
+/** Draws a sketch's fills, then its strokes; [unit] is the px size of one pad unit. */
+fun DrawScope.drawPadStrokes(strokes: List<PadStroke>, unit: Float) {
+    // Widths are dp on a 360 dp wide pad, so they scale with the pad.
+    val px = unit / 360f
     strokes.forEach { s ->
         val fabric = s.fill?.let { FABRICS.getOrNull(it) } ?: return@forEach
-        if (s.closed) fillFabric(padPath(s, w), fabric, density * scale)
+        if (s.closed) fillFabric(padPath(s, unit), fabric, px * 1.6f)
     }
     strokes.forEach { s ->
-        val width = (s.width * density * scale).coerceAtLeast(1f)
+        val width = (s.width * px).coerceAtLeast(1f)
         if (s.points.size == 2) {
-            drawCircle(Color(s.color), width / 2, Offset(s.points[0] * w, s.points[1] * w))
+            drawCircle(Color(s.color), width / 2, Offset(s.points[0] * unit, s.points[1] * unit))
         } else {
-            drawPath(padPath(s, w), Color(s.color), style = Stroke(width, cap = StrokeCap.Round, join = StrokeJoin.Round))
+            drawPath(padPath(s, unit), Color(s.color), style = Stroke(width, cap = StrokeCap.Round, join = StrokeJoin.Round))
         }
     }
 }
 
-/** A small, read-only view of a sketch (photo underlay included). */
+/** The sketch paper colour. */
+val PAD_PAPER = Color(0xFFFBF8F1)
+
+/**
+ * A sketch at [width]: paper, the trace photo (placed, sized and turned as saved) and the strokes,
+ * plus [overlay] drawn on top (live strokes in the editor). [photoContent] lets the editor show the
+ * photo even while hidden for thumbnails.
+ */
+@Composable
+fun PadSurface(pad: SketchPad, width: androidx.compose.ui.unit.Dp, modifier: Modifier = Modifier, overlay: DrawScope.(unit: Float) -> Unit = {}) {
+    val unitDp = width / pad.padW
+    Box(modifier.size(width, unitDp * pad.padH).clipToBounds().background(PAD_PAPER)) {
+        if (pad.photo != null && pad.showPhoto) {
+            val bitmap = rememberStoredImage(pad.photo)
+            if (bitmap != null) {
+                Image(
+                    bitmap, null, contentScale = ContentScale.FillWidth, alpha = pad.photoAlpha,
+                    modifier = Modifier
+                        .offset(unitDp * pad.photoX, unitDp * pad.photoY)
+                        .width(unitDp * pad.photoW)
+                        .aspectRatio(bitmap.width.toFloat() / bitmap.height.coerceAtLeast(1))
+                        .graphicsLayer { rotationZ = pad.photoRot },
+                )
+            }
+        }
+        Canvas(Modifier.matchParentSize()) {
+            val unit = size.width / pad.padW
+            drawPadStrokes(pad.strokes, unit)
+            overlay(unit)
+        }
+    }
+}
+
+/** A small, read-only view of a sketch, fitted into [modifier]'s box. */
 @Composable
 fun PadThumbnail(pad: SketchPad, modifier: Modifier) {
-    Box(modifier.background(Color(0xFFFBF8F1))) {
-        if (pad.photo != null && pad.showPhoto) {
-            StoredImage(pad.photo, Modifier.matchParentSize(), ContentScale.Crop, alpha = pad.photoAlpha)
-        }
-        Canvas(Modifier.matchParentSize()) { drawPadStrokes(pad.strokes) }
+    BoxWithConstraints(modifier.background(PAD_PAPER), contentAlignment = Alignment.Center) {
+        val w = minOf(maxWidth, maxHeight * (pad.padW / pad.padH))
+        PadSurface(pad, w)
     }
+}
+
+// ---- The standard tool popup: tap a tool, get one panel with all its settings. ----
+
+/**
+ * A toolbar tool that selects itself ([onSelect]) and opens one popup with all its settings. Every
+ * tool menu in the app uses this, built from [PopupSection], [ColourDots], [SizeDots], [ChoiceChips],
+ * [ToggleRow] and [ActionRow], so menus look and work the same everywhere.
+ */
+@Composable
+internal fun ToolPopup(
+    icon: ImageVector,
+    description: String,
+    tag: String,
+    selected: Boolean = false,
+    accent: Color? = null,
+    onSelect: () -> Unit = {},
+    content: @Composable ColumnScope.(close: () -> Unit) -> Unit,
+) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        ToolButton(icon, description, tag, selected = selected || open, accent = accent) { onSelect(); open = true }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            Column(Modifier.widthIn(min = 240.dp, max = 320.dp).padding(bottom = 4.dp).testTag("$tag-popup")) {
+                Text(description, style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 2.dp))
+                content { open = false }
+            }
+        }
+    }
+}
+
+/** A titled section inside a tool popup. */
+@Composable
+internal fun PopupSection(title: String, content: @Composable () -> Unit) {
+    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
+        Text(title, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(4.dp))
+        content()
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+internal fun ColourDots(colours: List<Long>, selected: Long?, tagPrefix: String, onPick: (Long) -> Unit) {
+    val cs = MaterialTheme.colorScheme
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        colours.forEachIndexed { i, c ->
+            val on = c == selected
+            Box(Modifier.size(36.dp).clip(CircleShape).clickable { onPick(c) }.testTag("$tagPrefix-$i"), contentAlignment = Alignment.Center) {
+                Box(Modifier.size(if (on) 30.dp else 24.dp).background(Color(c), CircleShape).border(if (on) 3.dp else 1.dp, if (on) cs.primary else cs.outline, CircleShape))
+            }
+        }
+    }
+}
+
+/** Sizes as dots you can see at a glance. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+internal fun SizeDots(sizes: List<Pair<String, Float>>, selected: Float, colour: Color, tagPrefix: String, onPick: (Float) -> Unit) {
+    val cs = MaterialTheme.colorScheme
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        sizes.forEach { (name, w) ->
+            val on = w == selected
+            Column(
+                Modifier.clip(RoundedCornerShape(12.dp)).background(if (on) cs.primary.copy(alpha = 0.16f) else Color.Transparent)
+                    .clickable { onPick(w) }.padding(horizontal = 8.dp, vertical = 4.dp).testTag("$tagPrefix-${name.lowercase()}"),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Box(Modifier.size(28.dp), contentAlignment = Alignment.Center) {
+                    Box(Modifier.size((w.coerceAtMost(22f)).dp + 2.dp).background(colour, CircleShape).border(1.dp, cs.outline, CircleShape))
+                }
+                Text(name, style = MaterialTheme.typography.labelSmall)
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+internal fun ChoiceChips(options: List<String>, selected: Int, tagPrefix: String, onPick: (Int) -> Unit) {
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        options.forEachIndexed { i, o ->
+            FilterChip(selected = i == selected, onClick = { onPick(i) }, label = { Text(o) }, modifier = Modifier.testTag("$tagPrefix-$i"))
+        }
+    }
+}
+
+@Composable
+internal fun ToggleRow(label: String, hint: String?, checked: Boolean, tag: String, onToggle: (Boolean) -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().clickable { onToggle(!checked) }.padding(horizontal = 16.dp, vertical = 2.dp).testTag(tag),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(label, style = MaterialTheme.typography.bodyMedium)
+            if (hint != null) Text(hint, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Switch(checked = checked, onCheckedChange = onToggle)
+    }
+}
+
+@Composable
+internal fun ActionRow(icon: ImageVector, label: String, tag: String, enabled: Boolean = true, onClick: () -> Unit) {
+    DropdownMenuItem(text = { Text(label) }, leadingIcon = { Icon(icon, null) }, onClick = onClick, enabled = enabled, modifier = Modifier.testTag(tag))
 }

@@ -120,9 +120,13 @@ class ProjectsViewModel(
         viewModelScope.launch { repo.addPhoto(id, file) }
     }
 
-    fun savePhoto(id: Long, caption: String, pins: List<PhotoPin>, marks: List<PhotoMark>) {
+    /** Saves a photo's caption, pins and marks; [file] changes when the photo was turned. */
+    fun savePhoto(id: Long, caption: String, pins: List<PhotoPin>, marks: List<PhotoMark>, file: String? = null, oldFile: String? = null) {
+        if (file != null && oldFile != null && file != oldFile && _open.value?.project?.cover == oldFile) setCover(file)
         viewModelScope.launch {
-            repo.updatePhoto(id) { it.copy(caption = caption, pins = ProjectJson.encodePins(pins), marks = ProjectJson.encodeMarks(marks)) }
+            repo.updatePhoto(id) {
+                it.copy(caption = caption, pins = ProjectJson.encodePins(pins), marks = ProjectJson.encodeMarks(marks), file = file ?: it.file)
+            }
         }
     }
 

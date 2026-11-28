@@ -34,7 +34,10 @@ data class PadStroke(
     fun pts(): List<Pt> = points.chunked(2).mapNotNull { if (it.size == 2) Pt(it[0], it[1]) else null }
 }
 
-/** A loose sketch, optionally traced over a faded photo. */
+/**
+ * A loose sketch, optionally traced over a faded photo. Units: 1.0 is the width of a new pad, which
+ * starts [padW] by [padH] and can grow in any direction.
+ */
 @Serializable
 data class SketchPad(
     val strokes: List<PadStroke> = emptyList(),
@@ -42,9 +45,19 @@ data class SketchPad(
     val photo: String? = null,
     val photoAlpha: Float = 0.45f,
     val showPhoto: Boolean = true,
+    /** The photo's top-left corner and width (pad units) and its turn in degrees (about its centre). */
+    val photoX: Float = 0f,
+    val photoY: Float = 0f,
+    val photoW: Float = 1f,
+    val photoRot: Float = 0f,
+    val padW: Float = 1f,
+    val padH: Float = PAD_HEIGHT,
 ) {
     val isEmpty get() = strokes.isEmpty() && photo == null
 }
+
+/** A side of the pad, for growing it. */
+enum class PadSide { LEFT, TOP, RIGHT, BOTTOM }
 
 @Serializable
 enum class CollageKind { PHOTO, IDEA, DESIGN, TEXT }
@@ -85,15 +98,69 @@ object StudioJson {
 enum class PadShape { LINE, BOX, OVAL, TRIANGLE }
 
 object Pad {
-    /** The mirror line runs down the middle of the pad. */
-    fun mirror(s: PadStroke): PadStroke =
-        s.copy(points = s.points.chunked(2).flatMap { if (it.size == 2) listOf(1f - it[0], it[1]) else emptyList() })
+    /** The mirror line runs down the middle of a pad [padW] wide. */
+    fun mirror(s: PadStroke, padW: Float = 1f): PadStroke =
+        s.copy(points = s.points.chunked(2).flatMap { if (it.size == 2) listOf(padW - it[0], it[1]) else emptyList() })
+
+    /** Makes the pad bigger by [amount] on [side]; growing left or up shifts the drawing so it stays put. */
+    fun grow(pad: SketchPad, side: PadSide, amount: Float = 0.5f): SketchPad {
+        val dx = if (side == PadSide.LEFT) amount else 0f
+        val dy = if (side == PadSide.TOP) amount else 0f
+        return pad.shifted(dx, dy).copy(
+            padW = pad.padW + if (side == PadSide.LEFT || side == PadSide.RIGHT) amount else 0f,
+            padH = pad.padH + if (side == PadSide.TOP || side == PadSide.BOTTOM) amount else 0f,
+        )
+    }
+
+    /** Shrinks the pad to the drawing plus a small margin (never smaller than half a pad). */
+    fun trim(pad: SketchPad, margin: Float = 0.06f): SketchPad {
+        val pts = pad.strokes.flatMap { it.pts() }
+        if (pts.isEmpty()) return pad
+        val minX = pts.minOf { it.x } - margin
+        val minY = pts.minOf { it.y } - margin
+        val w = maxOf(0.5f, pts.maxOf { it.x } + margin - minX)
+        val h = maxOf(0.5f, pts.maxOf { it.y } + margin - minY)
+        return pad.shifted(-minX, -minY).copy(padW = w, padH = h)
+    }
+
+    private fun SketchPad.shifted(dx: Float, dy: Float): SketchPad =
+        if (dx == 0f && dy == 0f) this else copy(
+            strokes = strokes.map { s -> s.copy(points = s.points.mapIndexed { i, v -> if (i % 2 == 0) v + dx else v + dy }) },
+            photoX = photoX + dx,
+            photoY = photoY + dy,
+        )
+
+    /**
+     * Auto-level: turns each straight run so its angle is a multiple of [stepDeg] (90 keeps to right
+     * angles, 45 adds diagonals, 15 is finer). Curves keep their shape and just move along.
+     */
+    fun level(points: List<Pt>, corners: List<Boolean>, stepDeg: Int): List<Pt> {
+        if (stepDeg <= 0 || points.size < 2) return points
+        val step = Math.toRadians(stepDeg.toDouble())
+        val out = ArrayList<Pt>(points.size)
+        out += points[0]
+        var delta = Pt(0f, 0f)
+        for (i in 1 until points.size) {
+            val moved = points[i] + delta
+            if (corners.getOrElse(i - 1) { true } && corners.getOrElse(i) { true }) {
+                val v = points[i] - points[i - 1]
+                val len = v.length()
+                val angle = Math.round(kotlin.math.atan2(v.y.toDouble(), v.x.toDouble()) / step) * step
+                val snapped = Pt(out[i - 1].x + (len * cos(angle)).toFloat(), out[i - 1].y + (len * sin(angle)).toFloat())
+                delta = snapped - points[i]
+                out += snapped
+            } else {
+                out += moved
+            }
+        }
+        return out
+    }
 
     /**
      * Turns a raw finger stroke (pad fractions) into a stroke. With [straighten] it goes through the
      * sketch engine: straight runs become lines, curves become smooth, and a loop closes.
      */
-    fun stroke(raw: List<Pt>, color: Long, width: Float, straighten: Boolean): PadStroke? {
+    fun stroke(raw: List<Pt>, color: Long, width: Float, straighten: Boolean, levelDeg: Int = 0): PadStroke? {
         if (raw.isEmpty()) return null
         if (raw.size == 1 || Geometry.pathLength(raw) < 0.004f) {
             // A tap leaves a dot.
@@ -103,7 +170,8 @@ object Pad {
             val units = raw.map { it * PAD_UNITS }
             val shape = Geometry.recognize(units, emptyList(), DrawOptions(snapToGrid = false, straighten = true))
             if (shape != null) {
-                val outline = Geometry.outline(shape).map { it * (1f / PAD_UNITS) }
+                val levelled = shape.copy(points = level(shape.points, shape.corners, levelDeg))
+                val outline = Geometry.outline(levelled).map { it * (1f / PAD_UNITS) }
                 return PadStroke(color, width, outline.flatMap { listOf(it.x, it.y) }, closed = shape.closed, smooth = false)
             }
         }
@@ -113,10 +181,10 @@ object Pad {
         return PadStroke(color, width, pts.flatMap { listOf(it.x, it.y) }, closed = closed)
     }
 
-    fun shape(kind: PadShape, from: Pt, to: Pt, color: Long, width: Float): PadStroke? {
+    fun shape(kind: PadShape, from: Pt, to: Pt, color: Long, width: Float, levelDeg: Int = 0): PadStroke? {
         if (from.dist(to) < 0.01f) return null
         val pts: List<Pt> = when (kind) {
-            PadShape.LINE -> listOf(from, to)
+            PadShape.LINE -> level(listOf(from, to), listOf(true, true), levelDeg)
             PadShape.BOX -> listOf(from, Pt(to.x, from.y), to, Pt(from.x, to.y))
             PadShape.TRIANGLE -> listOf(Pt((from.x + to.x) / 2, from.y), Pt(to.x, to.y), Pt(from.x, to.y))
             PadShape.OVAL -> {

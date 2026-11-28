@@ -3,6 +3,8 @@ package com.boro.notes
 import com.boro.notes.data.Design
 import com.boro.notes.data.LinkKind
 import com.boro.notes.data.Material
+import com.boro.notes.data.MaterialKind
+import com.boro.notes.data.turned
 import com.boro.notes.data.PhotoPin
 import com.boro.notes.data.ProjectJson
 import com.boro.notes.data.ProjectLink
@@ -82,6 +84,34 @@ class ProjectsViewModelTest {
         advanceUntilIdle()
         assertEquals(1, repo.projects.value.size)
         assertEquals("knee.jpg", vm.latestPhotos.value.values.single())
+    }
+
+    @Test
+    fun turnedPhotoKeepsCoverAndPinSpots() = runTest(dispatcher) {
+        vm.create()
+        advanceUntilIdle()
+        vm.addPhoto("side.jpg")
+        advanceUntilIdle()
+        vm.setCover("side.jpg")
+        val photo = vm.photos.value.single()
+        // A pin near the top-left lands near the top-right once the photo turns clockwise.
+        val pin = PhotoPin(0.1f, 0.2f, "Pocket").turned(clockwise = true)
+        assertEquals(0.8f, pin.x, 1e-5f)
+        assertEquals(0.1f, pin.y, 1e-5f)
+        assertEquals(PhotoPin(0.1f, 0.2f, "Pocket"), pin.turned(clockwise = false))
+        vm.savePhoto(photo.id, "", listOf(pin), emptyList(), file = "upright.jpg", oldFile = "side.jpg")
+        advanceUntilIdle()
+        assertEquals("upright.jpg", vm.photos.value.single().file)
+        assertEquals("upright.jpg", vm.open.value!!.project.cover)
+    }
+
+    @Test
+    fun materialKindsHaveTheirOwnFields() {
+        assertEquals(MaterialKind.FABRIC, MaterialKind.of("Fabric"))
+        assertEquals(MaterialKind.HARDWARE, MaterialKind.of("Hardware"))
+        // Older categories fold into notions.
+        assertEquals(MaterialKind.NOTIONS, MaterialKind.of("Thread"))
+        assertEquals(MaterialKind.NOTIONS, MaterialKind.of("Other"))
     }
 
     @Test

@@ -69,4 +69,34 @@ class StudioTest {
         assertEquals(collage, StudioJson.collage(StudioJson.encode(collage)))
         assertNotNull(StudioJson.pad("not json"))
     }
+
+    @Test
+    fun autoLevelSnapsStraightRunsToTheAngleStep() {
+        // A slightly crooked L: both legs snap square at 90°.
+        val pts = listOf(Pt(0f, 0f), Pt(1f, 0.08f), Pt(1.06f, 1f))
+        val out = Pad.level(pts, listOf(true, true, true), 90)
+        assertEquals(0f, out[1].y, 1e-4f)
+        assertEquals(out[1].x, out[2].x, 1e-4f)
+        // At 45° a near-diagonal becomes a true diagonal.
+        val d = Pad.level(listOf(Pt(0f, 0f), Pt(1f, 0.9f)), listOf(true, true), 45)
+        assertEquals(d[1].x, d[1].y, 1e-4f)
+        // Off leaves it alone.
+        assertEquals(pts, Pad.level(pts, listOf(true, true, true), 0))
+    }
+
+    @Test
+    fun padGrowsAndTrims() {
+        val pad = SketchPad(strokes = listOf(com.boro.notes.studio.PadStroke(0xFF000000, 3f, listOf(0.2f, 0.3f, 0.4f, 0.5f))))
+        val left = Pad.grow(pad, com.boro.notes.studio.PadSide.LEFT, 0.5f)
+        assertEquals(1.5f, left.padW, 1e-5f)
+        // Growing left keeps the drawing where it was on the paper by shifting it right.
+        assertEquals(0.7f, left.strokes[0].points[0], 1e-5f)
+        val down = Pad.grow(pad, com.boro.notes.studio.PadSide.BOTTOM, 0.5f)
+        assertEquals(pad.padH + 0.5f, down.padH, 1e-5f)
+        assertEquals(0.3f, down.strokes[0].points[1], 1e-5f)
+        val trimmed = Pad.trim(left)
+        assertEquals(0.5f, trimmed.padW, 1e-5f)
+        assertEquals(0.06f, trimmed.strokes[0].points[0], 1e-5f)
+        assertEquals(0.06f, trimmed.strokes[0].points[1], 1e-5f)
+    }
 }

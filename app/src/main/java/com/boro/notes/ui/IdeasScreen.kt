@@ -45,6 +45,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.Brush
 import androidx.compose.material.icons.filled.Checkroom
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Collections
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Dashboard
@@ -511,48 +512,54 @@ private fun CollageEditor(draft: IdeaDraft, vm: IdeasViewModel, collections: Lis
                 horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                // Add things.
+                // Add things: one popup.
                 ToolGroup(cs.primaryContainer, cs.onPrimaryContainer) {
-                    ToolMenu(Icons.Filled.AddPhotoAlternate, "Add a photo", "collage-photo") { close ->
-                        DropdownMenuItem(text = { Text("Take a photo") }, leadingIcon = { Icon(Icons.Filled.PhotoCamera, null) }, onClick = { close(); photos.camera() })
-                        DropdownMenuItem(text = { Text("From gallery") }, leadingIcon = { Icon(Icons.Filled.PhotoLibrary, null) }, onClick = { close(); photos.gallery() })
+                    ToolPopup(Icons.Filled.Add, "Add to the collage", "collage-add") { close ->
+                        PopupSection("Photo") {}
+                        ActionRow(Icons.Filled.PhotoCamera, "Take a photo", "collage-camera") { close(); photos.camera() }
+                        ActionRow(Icons.Filled.PhotoLibrary, "From gallery", "collage-photo") { close(); photos.gallery() }
+                        PopupSection("Saved") {}
+                        ActionRow(Icons.Filled.Collections, "A saved idea", "collage-idea") { close(); picking = CollageKind.IDEA }
+                        ActionRow(Icons.Filled.Checkroom, "A design", "collage-design") { close(); picking = CollageKind.DESIGN }
+                        ActionRow(Icons.Filled.TextFields, "A note", "collage-text") { close(); editingText = CollageItem(id = "", kind = CollageKind.TEXT) }
                     }
-                    ToolButton(Icons.Filled.Collections, "Add a saved idea", "collage-idea") { picking = CollageKind.IDEA }
-                    ToolButton(Icons.Filled.Checkroom, "Add a design", "collage-design") { picking = CollageKind.DESIGN }
-                    ToolButton(Icons.Filled.TextFields, "Add a note", "collage-text") { editingText = CollageItem(id = "", kind = CollageKind.TEXT) }
                 }
-                // The picked item.
+                // The picked item: one popup with everything it can do.
                 if (selectedItem != null) {
                     ToolGroup(cs.secondaryContainer, cs.onSecondaryContainer) {
-                        if (selectedItem.kind == CollageKind.TEXT) {
-                            ToolButton(Icons.Filled.Edit, "Edit note", "collage-edit") { editingText = selectedItem }
-                            ToolMenu(Icons.Filled.Palette, "Note colour", "collage-note-colour", accent = Color(selectedItem.color)) { close ->
-                                SwatchGrid(NOTE_COLOURS.mapIndexed { i, c -> Swatch("Note ${i + 1}", Color(c), "note-colour-$i", c == selectedItem.color) }) { s ->
-                                    vm.updateItem(selectedItem.copy(color = NOTE_COLOURS[s.tag.removePrefix("note-colour-").toInt()]), record = true)
-                                    close()
+                        ToolPopup(
+                            Icons.Filled.Tune, "Picked item", "collage-selected",
+                            accent = if (selectedItem.kind == CollageKind.TEXT) Color(selectedItem.color) else null,
+                        ) { close ->
+                            if (selectedItem.kind == CollageKind.TEXT) {
+                                PopupSection("Note colour") {
+                                    ColourDots(NOTE_COLOURS, selectedItem.color, "note-colour") { c ->
+                                        vm.updateItem(selectedItem.copy(color = c), record = true)
+                                    }
                                 }
+                                ActionRow(Icons.Filled.Edit, "Edit note", "collage-edit") { close(); editingText = selectedItem }
                             }
-                        }
-                        ToolButton(Icons.Filled.FlipToFront, "Bring to front", "collage-front") {
-                            vm.changeCollage { c -> c.copy(items = c.items.filter { it.id != selectedItem.id } + selectedItem) }
-                        }
-                        ToolButton(Icons.Filled.FlipToBack, "Send to back", "collage-back") {
-                            vm.changeCollage { c -> c.copy(items = listOf(selectedItem) + c.items.filter { it.id != selectedItem.id }) }
-                        }
-                        ToolButton(Icons.Filled.Delete, "Remove from collage", "collage-remove") {
-                            vm.changeCollage { c -> c.copy(items = c.items.filter { it.id != selectedItem.id }) }
-                            selected = null
+                            ActionRow(Icons.Filled.FlipToFront, "Bring to front", "collage-front") {
+                                vm.changeCollage { c -> c.copy(items = c.items.filter { it.id != selectedItem.id } + selectedItem) }
+                            }
+                            ActionRow(Icons.Filled.FlipToBack, "Send to back", "collage-back") {
+                                vm.changeCollage { c -> c.copy(items = listOf(selectedItem) + c.items.filter { it.id != selectedItem.id }) }
+                            }
+                            ActionRow(Icons.Filled.Delete, "Remove from collage", "collage-remove") {
+                                close()
+                                vm.changeCollage { c -> c.copy(items = c.items.filter { it.id != selectedItem.id }) }
+                                selected = null
+                            }
                         }
                     }
                 }
                 // The board.
                 ToolGroup(cs.tertiaryContainer, cs.onTertiaryContainer) {
-                    ToolMenu(Icons.Filled.Palette, "Board colour", "collage-paper", accent = Color(collage.paper ?: 0xFFF6EFDF)) { close ->
-                        MenuLabel("Board")
-                        SwatchGrid(BOARD_PAPERS.mapIndexed { i, (name, c) -> Swatch(name, Color(c), "board-$i", (collage.paper ?: 0xFFF6EFDF) == c) }) { s ->
-                            val c = BOARD_PAPERS[s.tag.removePrefix("board-").toInt()].second
-                            vm.changeCollage { it.copy(paper = c) }
-                            close()
+                    ToolPopup(Icons.Filled.Palette, "Board", "collage-paper", accent = Color(collage.paper ?: 0xFFF6EFDF)) { _ ->
+                        PopupSection("Paper") {
+                            ColourDots(BOARD_PAPERS.map { it.second }, collage.paper ?: 0xFFF6EFDF, "board") { c ->
+                                vm.changeCollage { it.copy(paper = c) }
+                            }
                         }
                     }
                     ToolButton(Icons.AutoMirrored.Filled.Undo, "Undo", "collage-undo", enabled = draft.canUndo) { vm.undo() }

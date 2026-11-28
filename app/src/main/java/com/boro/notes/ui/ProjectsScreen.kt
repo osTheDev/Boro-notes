@@ -105,6 +105,13 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.boro.notes.data.Design
+import com.boro.notes.data.MaterialKind
+import com.boro.notes.data.turned
+import androidx.compose.material.icons.filled.Rotate90DegreesCcw
+import kotlinx.coroutines.launch
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.platform.LocalContext
 import com.boro.notes.data.Idea
 import com.boro.notes.data.IdeaKind
 import com.boro.notes.data.LinkKind
@@ -127,8 +134,8 @@ const val TAG_PROJECT_PREFIX = "project-"
 const val TAG_PROJECT_EDITOR = "projectEditor"
 const val TAG_PHOTO_VIEWER = "photoViewer"
 
-private val MATERIAL_KINDS = listOf("Fabric", "Thread", "Hardware", "Other")
 private val MARK_COLOURS = listOf(0xFFD32F2F, 0xFFFFD54F, 0xFFFFFFFF, 0xFF2E4A7D, 0xFF2B2B2B)
+private val MARK_SIZES = listOf("Fine" to 2f, "Medium" to 4f, "Bold" to 8f)
 
 internal fun photoDate(millis: Long): String =
     DateTimeFormatter.ofPattern("d MMM").format(Instant.ofEpochMilli(millis).atZone(ZoneId.systemDefault()))
@@ -278,57 +285,85 @@ fun ProjectEditor(
                 contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 32.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
-                // Cover.
+                // Cover: always a square, so tall garments like jeans fit. On a wide screen the step
+                // and stats sit beside it; on a narrow one they follow underneath.
                 item {
-                    Box(
-                        Modifier.fillMaxWidth().heightIn(max = 260.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(16.dp)).background(cs.surfaceVariant)
-                            .clickable(enabled = cover != null) { photos.firstOrNull { it.file == cover }?.let { viewing = it.id } },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        if (cover != null) StoredImage(cover, Modifier.fillMaxSize())
-                        else Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            TextButton(onClick = source.camera) { Icon(Icons.Filled.PhotoCamera, null); Spacer(Modifier.width(6.dp)); Text("Take a photo") }
-                            TextButton(onClick = source.gallery) { Icon(Icons.Filled.PhotoLibrary, null); Spacer(Modifier.width(6.dp)); Text("Gallery") }
+                    BoxWithConstraints(Modifier.fillMaxWidth()) {
+                        val wide = maxWidth >= 560.dp
+                        val coverBox: @Composable (Modifier) -> Unit = { m ->
+                            Box(
+                                m.aspectRatio(1f).clip(RoundedCornerShape(16.dp)).background(cs.surfaceVariant)
+                                    .clickable(enabled = cover != null) { photos.firstOrNull { it.file == cover }?.let { viewing = it.id } }
+                                    .testTag("project-cover"),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                if (cover != null) StoredImage(cover, Modifier.fillMaxSize())
+                                else Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    TextButton(onClick = source.camera) { Icon(Icons.Filled.PhotoCamera, null); Spacer(Modifier.width(6.dp)); Text("Take a photo") }
+                                    TextButton(onClick = source.gallery) { Icon(Icons.Filled.PhotoLibrary, null); Spacer(Modifier.width(6.dp)); Text("Gallery") }
+                                }
+                            }
                         }
-                    }
-                    p.parentId?.let { parent ->
-                        val from = projects.firstOrNull { it.id == parent }
-                        if (from != null) {
-                            Text(
-                                "Spun off from ${from.name.ifBlank { "a project" }}",
-                                style = MaterialTheme.typography.labelMedium, color = cs.primary,
-                                modifier = Modifier.padding(top = 6.dp).clickable { vm.openProject(parent) },
-                            )
+                        val details: @Composable () -> Unit = {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                p.parentId?.let { parent ->
+                                    val from = projects.firstOrNull { it.id == parent }
+                                    if (from != null) {
+                                        Text(
+                                            "Spun off from ${from.name.ifBlank { "a project" }}",
+                                            style = MaterialTheme.typography.labelMedium, color = cs.primary,
+                                            modifier = Modifier.clickable { vm.openProject(parent) },
+                                        )
+                                    }
+                                }
+                                SectionTitle("Step")
+                                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    ProjectStep.entries.forEach { s ->
+                                        val past = s.ordinal < p.step.ordinal
+                                        FilterChip(
+                                            selected = s == p.step,
+                                            onClick = { vm.setStep(s) },
+                                            leadingIcon = if (past) ({ Icon(Icons.Filled.Check, null, Modifier.size(16.dp)) }) else null,
+                                            label = { Text(s.label) },
+                                            modifier = Modifier.testTag("step-${s.name}"),
+                                        )
+                                    }
+                                }
+                                val doneTodos = draft.todos.count { it.done }
+                                Text(
+                                    listOf(
+                                        "${photos.size} photo${if (photos.size == 1) "" else "s"}",
+                                        if (draft.todos.isEmpty()) null else "$doneTodos of ${draft.todos.size} to-dos done",
+                                        if (draft.materials.isEmpty()) null else "${draft.materials.size} material${if (draft.materials.size == 1) "" else "s"}",
+                                    ).filterNotNull().joinToString(" · "),
+                                    style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant,
+                                    modifier = Modifier.testTag("project-stats"),
+                                )
+                                if (p.step == ProjectStep.FINISHED) {
+                                    Row(
+                                        Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(cs.tertiaryContainer)
+                                            .clickable { spinning = true }.padding(12.dp).testTag("spin-off"),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        Icon(Icons.AutoMirrored.Filled.CallSplit, null, tint = cs.onTertiaryContainer)
+                                        Spacer(Modifier.width(10.dp))
+                                        Column(Modifier.weight(1f)) {
+                                            Text("Spin off a new garment", style = MaterialTheme.typography.titleSmall, color = cs.onTertiaryContainer)
+                                            Text("Copies its designs and materials, and notes your tweaks", style = MaterialTheme.typography.bodySmall, color = cs.onTertiaryContainer)
+                                        }
+                                    }
+                                }
+                            }
                         }
-                    }
-                }
-                // Steps.
-                item {
-                    SectionTitle("Step")
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        ProjectStep.entries.forEach { s ->
-                            val past = s.ordinal < p.step.ordinal
-                            FilterChip(
-                                selected = s == p.step,
-                                onClick = { vm.setStep(s) },
-                                leadingIcon = if (past) ({ Icon(Icons.Filled.Check, null, Modifier.size(16.dp)) }) else null,
-                                label = { Text(s.label) },
-                                modifier = Modifier.testTag("step-${s.name}"),
-                            )
-                        }
-                    }
-                    if (p.step == ProjectStep.FINISHED) {
-                        Spacer(Modifier.height(8.dp))
-                        Row(
-                            Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(cs.tertiaryContainer)
-                                .clickable { spinning = true }.padding(12.dp).testTag("spin-off"),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Icon(Icons.AutoMirrored.Filled.CallSplit, null, tint = cs.onTertiaryContainer)
-                            Spacer(Modifier.width(10.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text("Spin off a new garment", style = MaterialTheme.typography.titleSmall, color = cs.onTertiaryContainer)
-                                Text("Copies its designs and materials, and notes your tweaks", style = MaterialTheme.typography.bodySmall, color = cs.onTertiaryContainer)
+                        if (wide) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                                coverBox(Modifier.width(minOf(maxWidth * 0.45f, 420.dp)))
+                                Box(Modifier.weight(1f)) { details() }
+                            }
+                        } else {
+                            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                                coverBox(Modifier.fillMaxWidth())
+                                details()
                             }
                         }
                     }
@@ -400,19 +435,24 @@ fun ProjectEditor(
                         IconButton(onClick = { editingMaterial = null to Material() }, modifier = Modifier.testTag("material-add")) { Icon(Icons.Filled.Add, "Add material") }
                     }
                     if (draft.materials.isEmpty()) {
-                        Text("Fabric, thread and hardware: weight, weave, where you bought it.", style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant)
+                        Text("Fabric (weight, weave), hardware like rivets and buttons, and notions like thread: with links and how many.", style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant)
                     }
-                    draft.materials.forEachIndexed { i, m ->
+                    val sorted = draft.materials.withIndex().sortedBy { MaterialKind.of(it.value.kind).ordinal }
+                    sorted.forEach { (i, m) ->
+                        val kind = MaterialKind.of(m.kind)
                         Column(
                             Modifier.fillMaxWidth().padding(vertical = 3.dp).clip(RoundedCornerShape(12.dp)).background(cs.surfaceContainer)
                                 .clickable { editingMaterial = i to m }.padding(12.dp).testTag("material-$i"),
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(m.name.ifBlank { m.kind }, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
-                                Text(m.kind, style = MaterialTheme.typography.labelSmall, color = cs.onSecondaryContainer,
+                                Text(m.name.ifBlank { kind.label }, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                                Text(kind.label, style = MaterialTheme.typography.labelSmall, color = cs.onSecondaryContainer,
                                     modifier = Modifier.background(cs.secondaryContainer, RoundedCornerShape(50)).padding(horizontal = 8.dp, vertical = 2.dp))
                             }
-                            val details = listOf(m.weight, m.weave, m.colour, m.quantity).filter { it.isNotBlank() }
+                            val details = when (kind) {
+                                MaterialKind.FABRIC -> listOf(m.weight, m.weave, m.colour, m.quantity)
+                                else -> listOf(if (m.quantity.isBlank()) "" else "× ${m.quantity}", m.colour)
+                            }.filter { it.isNotBlank() }
                             if (details.isNotEmpty()) Text(details.joinToString(" · "), style = MaterialTheme.typography.bodySmall)
                             if (m.notes.isNotBlank()) Text(m.notes, style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant)
                             if (m.link.isNotBlank()) {
@@ -468,7 +508,7 @@ fun ProjectEditor(
     photos.firstOrNull { it.id == viewing }?.let { photo ->
         PhotoViewer(
             photo, isCover = cover == photo.file,
-            onSave = { caption, pins, marks -> vm.savePhoto(photo.id, caption, pins, marks) },
+            onSave = { caption, pins, marks, file -> vm.savePhoto(photo.id, caption, pins, marks, file, photo.file) },
             onCover = { vm.setCover(photo.file) },
             onDelete = { vm.deletePhoto(photo); viewing = null },
             onClose = { viewing = null },
@@ -568,25 +608,52 @@ private fun SpinOffDialog(from: String, onDone: (String, String) -> Unit, onDism
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun MaterialDialog(initial: Material, isNew: Boolean, onSave: (Material) -> Unit, onDelete: () -> Unit, onDismiss: () -> Unit) {
-    var m by remember { mutableStateOf(initial) }
+    var m by remember { mutableStateOf(initial.copy(kind = MaterialKind.of(initial.kind).label)) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(if (isNew) "Add material" else "Material") },
         text = {
             Column(Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                val kind = MaterialKind.of(m.kind)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    MATERIAL_KINDS.forEach { k -> FilterChip(selected = m.kind == k, onClick = { m = m.copy(kind = k) }, label = { Text(k) }) }
+                    MaterialKind.entries.forEach { k ->
+                        FilterChip(selected = kind == k, onClick = { m = m.copy(kind = k.label) }, label = { Text(k.label) }, modifier = Modifier.testTag("material-kind-${k.name}"))
+                    }
                 }
-                OutlinedTextField(m.name, { m = m.copy(name = it) }, label = { Text("Name") }, placeholder = { Text("14 oz selvedge denim") }, singleLine = true, modifier = Modifier.fillMaxWidth().testTag("material-name"))
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    OutlinedTextField(m.weight, { m = m.copy(weight = it) }, label = { Text("Weight") }, singleLine = true, modifier = Modifier.weight(1f))
-                    OutlinedTextField(m.weave, { m = m.copy(weave = it) }, label = { Text("Weave") }, singleLine = true, modifier = Modifier.weight(1f))
+                val namePlaceholder = when (kind) {
+                    MaterialKind.FABRIC -> "14 oz selvedge denim"
+                    MaterialKind.HARDWARE -> "Copper rivets"
+                    MaterialKind.NOTIONS -> "Tex 70 thread"
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    OutlinedTextField(m.colour, { m = m.copy(colour = it) }, label = { Text("Colour") }, singleLine = true, modifier = Modifier.weight(1f))
-                    OutlinedTextField(m.quantity, { m = m.copy(quantity = it) }, label = { Text("Amount") }, singleLine = true, modifier = Modifier.weight(1f))
+                OutlinedTextField(m.name, { m = m.copy(name = it) }, label = { Text("Name") }, placeholder = { Text(namePlaceholder) }, singleLine = true, modifier = Modifier.fillMaxWidth().testTag("material-name"))
+                when (kind) {
+                    MaterialKind.FABRIC -> {
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            OutlinedTextField(m.weight, { m = m.copy(weight = it) }, label = { Text("Weight") }, placeholder = { Text("14 oz") }, singleLine = true, modifier = Modifier.weight(1f).testTag("material-weight"))
+                            OutlinedTextField(m.weave, { m = m.copy(weave = it) }, label = { Text("Weave") }, placeholder = { Text("3x1 twill") }, singleLine = true, modifier = Modifier.weight(1f).testTag("material-weave"))
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            OutlinedTextField(m.colour, { m = m.copy(colour = it) }, label = { Text("Colour") }, singleLine = true, modifier = Modifier.weight(1f))
+                            OutlinedTextField(m.quantity, { m = m.copy(quantity = it) }, label = { Text("Amount") }, placeholder = { Text("2.5 yd") }, singleLine = true, modifier = Modifier.weight(1f))
+                        }
+                    }
+                    MaterialKind.HARDWARE, MaterialKind.NOTIONS -> {
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            OutlinedTextField(
+                                m.quantity, { m = m.copy(quantity = it) }, label = { Text("Quantity") },
+                                placeholder = { Text(if (kind == MaterialKind.HARDWARE) "12" else "2 spools") },
+                                singleLine = true, modifier = Modifier.weight(1f).testTag("material-quantity"),
+                            )
+                            OutlinedTextField(
+                                m.colour, { m = m.copy(colour = it) },
+                                label = { Text(if (kind == MaterialKind.HARDWARE) "Finish" else "Colour") },
+                                placeholder = { Text(if (kind == MaterialKind.HARDWARE) "Antique copper" else "Mustard") },
+                                singleLine = true, modifier = Modifier.weight(1f),
+                            )
+                        }
+                    }
                 }
-                OutlinedTextField(m.link, { m = m.copy(link = it) }, label = { Text("Where to buy (link)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(m.link, { m = m.copy(link = it) }, label = { Text("Product link") }, placeholder = { Text("https://") }, singleLine = true, modifier = Modifier.fillMaxWidth().testTag("material-link"))
                 OutlinedTextField(m.notes, { m = m.copy(notes = it) }, label = { Text("Notes") }, minLines = 2, modifier = Modifier.fillMaxWidth())
             }
         },
@@ -611,7 +678,7 @@ private enum class PhotoMode { VIEW, PIN, MARK }
 private fun PhotoViewer(
     photo: ProjectPhoto,
     isCover: Boolean,
-    onSave: (String, List<PhotoPin>, List<PhotoMark>) -> Unit,
+    onSave: (caption: String, pins: List<PhotoPin>, marks: List<PhotoMark>, file: String) -> Unit,
     onCover: () -> Unit,
     onDelete: () -> Unit,
     onClose: () -> Unit,
@@ -622,13 +689,41 @@ private fun PhotoViewer(
     val marks = remember(photo.id) { mutableStateListOf<PhotoMark>().apply { addAll(ProjectJson.marks(photo.marks)) } }
     var mode by remember { mutableStateOf(PhotoMode.VIEW) }
     var markColour by remember { mutableStateOf(MARK_COLOURS[0]) }
+    var markWidth by remember { mutableStateOf(4f) }
     var openPin by remember { mutableStateOf<Int?>(null) }
     var newPinAt by remember { mutableStateOf<Offset?>(null) }
     var editPin by remember { mutableStateOf<Int?>(null) }
     var confirmDelete by remember { mutableStateOf(false) }
     val live = remember { mutableStateListOf<Offset>() }
-    val bitmap = rememberStoredImage(photo.file)
-    val close = { onSave(caption, pins.toList(), marks.toList()); onClose() }
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    // Turning saves a new copy; the copies in between (and the original, once replaced) are tidied on close.
+    var file by remember(photo.id) { mutableStateOf(photo.file) }
+    val made = remember(photo.id) { mutableListOf<String>() }
+    var turning by remember { mutableStateOf(false) }
+    val bitmap = rememberStoredImage(file)
+    fun turn(clockwise: Boolean) {
+        if (turning) return
+        turning = true
+        scope.launch {
+            val out = rotateStoredImage(context, file, clockwise)
+            if (out != null) {
+                made += out
+                file = out
+                val p2 = pins.map { it.turned(clockwise) }
+                pins.clear(); pins.addAll(p2)
+                val m2 = marks.map { it.turned(clockwise) }
+                marks.clear(); marks.addAll(m2)
+            }
+            turning = false
+        }
+    }
+    val close = {
+        onSave(caption, pins.toList(), marks.toList(), file)
+        made.filter { it != file }.forEach { deleteStoredImage(context, it) }
+        if (file != photo.file) deleteStoredImage(context, photo.file)
+        onClose()
+    }
 
     Dialog(onDismissRequest = close, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
         Surface(Modifier.fillMaxSize().testTag(TAG_PHOTO_VIEWER), color = Color(0xFF151515), contentColor = Color.White) {
@@ -637,6 +732,12 @@ private fun PhotoViewer(
                     IconButton(onClick = close, modifier = Modifier.testTag("photo-close")) { Icon(Icons.Filled.Close, "Close") }
                     Text(photoDate(photo.takenAt), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
                     TextButton(onClick = onCover, enabled = !isCover) { Text(if (isCover) "Cover" else "Make cover", color = if (isCover) Color.White.copy(alpha = 0.5f) else Color.White) }
+                    IconButton(onClick = { turn(false) }, enabled = bitmap != null, modifier = Modifier.testTag("photo-turn-left")) {
+                        Icon(Icons.Filled.Rotate90DegreesCcw, "Turn left")
+                    }
+                    IconButton(onClick = { turn(true) }, enabled = bitmap != null, modifier = Modifier.testTag("photo-turn-right")) {
+                        Icon(Icons.Filled.Rotate90DegreesCcw, "Turn right", Modifier.graphicsLayer(scaleX = -1f))
+                    }
                     IconButton(onClick = { confirmDelete = true }) { Icon(Icons.Filled.Delete, "Delete photo") }
                 }
                 BoxWithConstraints(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
@@ -647,9 +748,9 @@ private fun PhotoViewer(
                     val w = minOf(boxW, boxH * aspect)
                     val h = w / aspect
                     Box(Modifier.size(with(dens) { w.toDp() }, with(dens) { h.toDp() })) {
-                        if (bitmap != null) Image(bitmap, photo.caption.ifBlank { "Photo" }, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
+                        if (bitmap != null) Image(bitmap, caption.ifBlank { "Photo" }, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
                         Canvas(
-                            Modifier.fillMaxSize().testTag("photo-canvas").pointerInput(mode, markColour, w, h) {
+                            Modifier.fillMaxSize().testTag("photo-canvas").pointerInput(mode, markColour, markWidth, w, h) {
                                 awaitEachGesture {
                                     val down = awaitFirstDown()
                                     val start = down.position
@@ -666,7 +767,7 @@ private fun PhotoViewer(
                                     val pts = live.toList()
                                     live.clear()
                                     when (mode) {
-                                        PhotoMode.MARK -> if (pts.size > 1) marks.add(PhotoMark(markColour, 4f, pts.flatMap { listOf(it.x / w, it.y / h) }))
+                                        PhotoMode.MARK -> if (pts.size > 1) marks.add(PhotoMark(markColour, markWidth, pts.flatMap { listOf(it.x / w, it.y / h) }))
                                         PhotoMode.PIN -> if (!moved) newPinAt = Offset(start.x / w, start.y / h)
                                         PhotoMode.VIEW -> if (!moved) openPin = null
                                     }
@@ -674,7 +775,7 @@ private fun PhotoViewer(
                             },
                         ) {
                             marks.forEach { m -> drawMark(m.points.chunked(2).mapNotNull { if (it.size == 2) Offset(it[0] * size.width, it[1] * size.height) else null }, Color(m.color), m.width * density) }
-                            if (live.isNotEmpty()) drawMark(live, Color(markColour), 4f * density)
+                            if (live.isNotEmpty()) drawMark(live, Color(markColour), markWidth * density)
                         }
                         // Pins sit over the photo; tap one to read it.
                         pins.forEachIndexed { i, pin ->
@@ -716,18 +817,14 @@ private fun PhotoViewer(
                     ToolGroup(Color.White.copy(alpha = 0.12f), Color.White) {
                         ToolButton(Icons.Filled.PanTool, "Look", "photo-view", selected = mode == PhotoMode.VIEW) { mode = PhotoMode.VIEW }
                         ToolButton(Icons.Filled.PushPin, "Pin a note", "photo-pin", selected = mode == PhotoMode.PIN) { mode = PhotoMode.PIN }
-                        ToolButton(Icons.Filled.Draw, "Mark up", "photo-mark", selected = mode == PhotoMode.MARK) { mode = PhotoMode.MARK }
+                        ToolPopup(Icons.Filled.Draw, "Mark up", "photo-mark", selected = mode == PhotoMode.MARK, accent = Color(markColour), onSelect = { mode = PhotoMode.MARK }) { _ ->
+                            PopupSection("Colour") { ColourDots(MARK_COLOURS, markColour, "mark-colour") { markColour = it } }
+                            PopupSection("Size") { SizeDots(MARK_SIZES, markWidth, Color(markColour), "mark-size") { markWidth = it } }
+                            ActionRow(Icons.Filled.Delete, "Clear all marks", "mark-clear", enabled = marks.isNotEmpty()) { marks.clear() }
+                        }
                     }
                     if (mode == PhotoMode.MARK) {
                         ToolGroup(Color.White.copy(alpha = 0.12f), Color.White) {
-                            MARK_COLOURS.forEachIndexed { i, c ->
-                                Box(
-                                    Modifier.size(36.dp).clip(CircleShape).clickable { markColour = c }.testTag("mark-colour-$i"),
-                                    contentAlignment = Alignment.Center,
-                                ) {
-                                    Box(Modifier.size(if (markColour == c) 26.dp else 20.dp).background(Color(c), CircleShape).border(if (markColour == c) 2.dp else 1.dp, Color.White, CircleShape))
-                                }
-                            }
                             ToolButton(Icons.AutoMirrored.Filled.Undo, "Undo mark", "mark-undo", enabled = marks.isNotEmpty()) { marks.removeAt(marks.lastIndex) }
                         }
                     }

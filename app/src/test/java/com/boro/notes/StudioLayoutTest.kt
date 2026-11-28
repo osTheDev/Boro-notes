@@ -28,6 +28,34 @@ class CoverStudioLayoutTest {
     @get:Rule val rule = createComposeRule()
 
     @Test
+    fun brushPopupHoldsAllItsSettings() {
+        val notes = FakeNoteRepository()
+        val notesVm = NotesViewModel(notes, SavedStateHandle())
+        val designs = FakeDesignRepository()
+        val designsVm = DesignsViewModel(designs, notes, SavedStateHandle())
+        val ideas = FakeIdeaRepository()
+        val ideasVm = IdeasViewModel(ideas)
+        val projectsVm = ProjectsViewModel(FakeProjectRepository(), designs, ideas)
+        rule.setContent { testRoot(notesVm, designsVm, projectsVm = projectsVm, ideasVm = ideasVm) }
+
+        rule.onNodeWithTag("navDesigns").performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag("studio-tab-SKETCH").performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_NEW_IDEA).performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag("new-sketch").performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag("pad-draw").performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag("pad-draw-popup").assertIsDisplayed()
+        rule.onNodeWithTag("pad-mirror").assertIsDisplayed()
+        rule.onNodeWithTag("pad-straighten").assertIsDisplayed()
+        rule.onNodeWithTag("pad-level-1").performClick()
+        rule.waitForIdle()
+    }
+
+    @Test
     fun sketchAndProjectOpenFullScreen() {
         val notes = FakeNoteRepository()
         val notesVm = NotesViewModel(notes, SavedStateHandle())
@@ -57,10 +85,11 @@ class CoverStudioLayoutTest {
         rule.onNodeWithTag(com.boro.notes.ui.TAG_SKETCH_PAD).assertIsDisplayed()
         rule.onNodeWithTag(com.boro.notes.ui.TAG_PAD_CANVAS).assertIsDisplayed()
         rule.onNodeWithTag("navDesigns").assertDoesNotExist()
-        rule.onNodeWithTag("pad-mirror").performClick()
         rule.onNodeWithTag("pad-fill").performClick()
         rule.waitForIdle()
         rule.onNodeWithTag("fabric-0").assertIsDisplayed()
+        rule.onNodeWithTag("fabric-0").performClick()
+        rule.waitForIdle()
         rule.onNodeWithTag("idea-title").performTextReplacement("Scoop pocket")
         rule.onNodeWithTag(TAG_BACK).performClick()
         rule.waitForIdle()
@@ -115,6 +144,8 @@ class InnerStudioLayoutTest {
         rule.onNodeWithTag("new-collage").performClick()
         rule.waitForIdle()
         rule.onNodeWithTag(com.boro.notes.ui.TAG_COLLAGE).assertIsDisplayed()
+        rule.onNodeWithTag("collage-add").performClick()
+        rule.waitForIdle()
         rule.onNodeWithTag("collage-idea").performClick()
         rule.waitForIdle()
         rule.onNodeWithTag("pick-1").performClick()
@@ -122,6 +153,6 @@ class InnerStudioLayoutTest {
         val items = ideasVm.open.value!!.collage.items
         assertEquals(1, items.size)
         rule.onNodeWithTag("collage-item-${items.single().id}").assertExists()
-        rule.onNodeWithTag("collage-remove").assertIsDisplayed()
+        rule.onNodeWithTag("collage-selected").assertIsDisplayed()
     }
 }

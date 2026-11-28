@@ -90,12 +90,12 @@ class IdeasViewModel(private val repo: IdeaRepository) : ViewModel() {
     fun setNote(note: String) = edit { it.copy(idea = it.idea.copy(note = note)) }
     fun setCollection(name: String?) = edit { it.copy(idea = it.idea.copy(collection = name?.trim()?.takeIf(String::isNotEmpty))) }
 
-    /** A change to the sketch that can be undone (a stroke, a fill, the photo). */
-    fun changePad(change: (SketchPad) -> SketchPad) {
+    /** A change to the sketch that can be undone (a stroke, a fill, the photo). [record] false for live drags after [checkpoint]. */
+    fun changePad(record: Boolean = true, change: (SketchPad) -> SketchPad) {
         val d = _open.value ?: return
         val next = change(d.pad)
         if (next == d.pad) return
-        pushUndo(StudioJson.encode(d.pad))
+        if (record) pushUndo(StudioJson.encode(d.pad))
         _open.value = d.copy(pad = next).withHistory()
         scheduleSave()
     }
