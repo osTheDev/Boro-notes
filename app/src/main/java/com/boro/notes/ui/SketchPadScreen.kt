@@ -141,12 +141,12 @@ fun SketchPadScreen(draft: IdeaDraft, vm: IdeasViewModel, collections: List<Stri
             BoxWithConstraints(
                 Modifier.weight(1f).fillMaxWidth().clipToBounds().background(cs.surfaceContainerHighest.copy(alpha = 0.5f)),
             ) {
-                val density = LocalDensity.current
+                val dens = LocalDensity.current
                 val padW = minOf(maxWidth - 16.dp, (maxHeight - 16.dp) / PAD_HEIGHT)
                 val padH = padW * PAD_HEIGHT
-                val originX = with(density) { ((maxWidth - padW) / 2).toPx() }
-                val originY = with(density) { ((maxHeight - padH) / 2).toPx() }
-                val wPx = with(density) { padW.toPx() }
+                val originX = with(dens) { ((maxWidth - padW) / 2).toPx() }
+                val originY = with(dens) { ((maxHeight - padH) / 2).toPx() }
+                val wPx = with(dens) { padW.toPx() }
                 Box(
                     Modifier
                         .fillMaxSize()

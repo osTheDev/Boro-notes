@@ -130,7 +130,7 @@ const val TAG_PHOTO_VIEWER = "photoViewer"
 private val MATERIAL_KINDS = listOf("Fabric", "Thread", "Hardware", "Other")
 private val MARK_COLOURS = listOf(0xFFD32F2F, 0xFFFFD54F, 0xFFFFFFFF, 0xFF2E4A7D, 0xFF2B2B2B)
 
-internal fun shortDate(millis: Long): String =
+internal fun photoDate(millis: Long): String =
     DateTimeFormatter.ofPattern("d MMM").format(Instant.ofEpochMilli(millis).atZone(ZoneId.systemDefault()))
 
 /** The Projects tab: what's on the table (with its step), and a shelf of finished pieces. */
@@ -359,7 +359,7 @@ fun ProjectEditor(
                                             }
                                         }
                                     }
-                                    Text(shortDate(photo.takenAt), style = MaterialTheme.typography.labelMedium)
+                                    Text(photoDate(photo.takenAt), style = MaterialTheme.typography.labelMedium)
                                     if (photo.caption.isNotBlank()) {
                                         Text(photo.caption, style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
                                     }
@@ -635,18 +635,18 @@ private fun PhotoViewer(
             Column(Modifier.fillMaxSize().systemBarsPadding()) {
                 Row(Modifier.fillMaxWidth().padding(4.dp), verticalAlignment = Alignment.CenterVertically) {
                     IconButton(onClick = close, modifier = Modifier.testTag("photo-close")) { Icon(Icons.Filled.Close, "Close") }
-                    Text(shortDate(photo.takenAt), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                    Text(photoDate(photo.takenAt), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
                     TextButton(onClick = onCover, enabled = !isCover) { Text(if (isCover) "Cover" else "Make cover", color = if (isCover) Color.White.copy(alpha = 0.5f) else Color.White) }
                     IconButton(onClick = { confirmDelete = true }) { Icon(Icons.Filled.Delete, "Delete photo") }
                 }
                 BoxWithConstraints(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    val density = LocalDensity.current
+                    val dens = LocalDensity.current
                     val aspect = bitmap?.let { it.width.toFloat() / it.height.coerceAtLeast(1) } ?: 1f
-                    val boxW = with(density) { maxWidth.toPx() }
-                    val boxH = with(density) { maxHeight.toPx() }
+                    val boxW = with(dens) { maxWidth.toPx() }
+                    val boxH = with(dens) { maxHeight.toPx() }
                     val w = minOf(boxW, boxH * aspect)
                     val h = w / aspect
-                    Box(Modifier.size(with(density) { w.toDp() }, with(density) { h.toDp() })) {
+                    Box(Modifier.size(with(dens) { w.toDp() }, with(dens) { h.toDp() })) {
                         if (bitmap != null) Image(bitmap, photo.caption.ifBlank { "Photo" }, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
                         Canvas(
                             Modifier.fillMaxSize().testTag("photo-canvas").pointerInput(mode, markColour, w, h) {
