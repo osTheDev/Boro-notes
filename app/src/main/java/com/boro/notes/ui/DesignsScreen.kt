@@ -20,6 +20,16 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items as gridItems
+import androidx.compose.ui.draw.clip
+import androidx.compose.material.icons.filled.Brush
+import androidx.compose.material.icons.filled.Checkroom
+import androidx.compose.material.icons.filled.ContentCut
+import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -80,7 +90,6 @@ import com.boro.notes.sketch.SketchCodec
 import com.boro.notes.sketch.Stamp
 
 const val TAG_DESIGN_LIST = "designList"
-const val TAG_DESIGN_BOARD = "designBoard"
 const val TAG_NEW_DESIGN = "newDesign"
 const val TAG_SKETCH_EDITOR = "sketchEditor"
 const val TAG_DESIGN_PREFIX = "design-"
@@ -92,127 +101,171 @@ const val TAG_PRESET_PREFIX = "preset-"
 /** Tools that drag out a perfect shape and preview it while dragging. */
 private val SHAPE_TOOLS = setOf(Tool.LINE, Tool.BOX, Tool.OVAL)
 
+/** The four tabs of the Designs section. */
+enum class StudioTab(val label: String, val icon: androidx.compose.ui.graphics.vector.ImageVector) {
+    DESIGNS("Designs", Icons.Filled.Checkroom),
+    PATTERN("Pattern", Icons.Filled.ContentCut),
+    SKETCH("Sketch", Icons.Filled.Brush),
+    PROJECTS("Projects", Icons.Filled.Inventory2),
+}
+
+/** True while something in the Designs section is open full screen (so the cover screen hides its bar). */
 @Composable
-fun DesignsScreen(designsVm: DesignsViewModel, notesVm: NotesViewModel, wide: Boolean) {
+fun designsEditorOpen(designsVm: DesignsViewModel, projectsVm: ProjectsViewModel, ideasVm: IdeasViewModel): Boolean =
+    designsVm.sketch.collectAsStateWithLifecycle().value != null ||
+        projectsVm.open.collectAsStateWithLifecycle().value != null ||
+        ideasVm.open.collectAsStateWithLifecycle().value != null
+
+/**
+ * Designs: preset garments to edit, pattern pieces (coming), quick sketches and collages, and the
+ * projects on the table. Something opened from a project (a linked design or sketch) sits over it,
+ * so Back returns to the project.
+ */
+@Composable
+fun DesignsScreen(
+    designsVm: DesignsViewModel,
+    notesVm: NotesViewModel,
+    wide: Boolean,
+    projectsVm: ProjectsViewModel,
+    ideasVm: IdeasViewModel,
+) {
     val sketch by designsVm.sketch.collectAsStateWithLifecycle()
-    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { designsVm.flush() }
+    val project by projectsVm.open.collectAsStateWithLifecycle()
+    val idea by ideasVm.open.collectAsStateWithLifecycle()
+    val designs by designsVm.all.collectAsStateWithLifecycle()
+    var tab by rememberSaveable { mutableStateOf(StudioTab.DESIGNS) }
+    LifecycleEventEffect(Lifecycle.Event.ON_STOP) {
+        designsVm.flush()
+        projectsVm.flush()
+        ideasVm.flush()
+    }
 
-    val current = sketch
-    if (current == null) {
-        if (wide) DesignBoard(designsVm) else DesignList(designsVm)
-    } else {
-        BackHandler { designsVm.close() }
-        SketchEditor(current, designsVm, notesVm, wide)
+    val currentSketch = sketch
+    val currentIdea = idea
+    val currentProject = project
+    when {
+        currentSketch != null -> {
+            BackHandler { designsVm.close() }
+            SketchEditor(currentSketch, designsVm, notesVm, wide)
+        }
+        currentIdea != null -> {
+            BackHandler { ideasVm.close() }
+            IdeaEditor(currentIdea, ideasVm, designs)
+        }
+        currentProject != null -> {
+            BackHandler { projectsVm.close() }
+            ProjectEditor(
+                currentProject, projectsVm,
+                onOpenDesign = designsVm::open,
+                onOpenIdea = ideasVm::openIdea,
+            )
+        }
+        else -> Column(Modifier.fillMaxSize()) {
+            StudioTabs(tab) { tab = it }
+            when (tab) {
+                StudioTab.DESIGNS -> DesignGrid(designsVm, Modifier.weight(1f))
+                StudioTab.PATTERN -> PatternComingSoon(Modifier.weight(1f))
+                StudioTab.SKETCH -> SketchBoard(ideasVm, designs, Modifier.weight(1f))
+                StudioTab.PROJECTS -> ProjectsList(projectsVm, Modifier.weight(1f))
+            }
+        }
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+/** Icon tabs across the top, each with its own colour when picked. */
 @Composable
-private fun DesignList(vm: DesignsViewModel) {
-    val designs by vm.filtered.collectAsStateWithLifecycle()
-    val all by vm.all.collectAsStateWithLifecycle()
-    val filter by vm.stageFilter.collectAsStateWithLifecycle()
-    Scaffold(
-        modifier = Modifier.testTag(TAG_DESIGN_LIST),
-        topBar = { TopAppBar(title = { Text("Designs") }) },
-        floatingActionButton = { NewDesignFab(vm) },
-    ) { padding ->
-        Column(Modifier.padding(padding).fillMaxSize()) {
-            LazyRow(
-                contentPadding = PaddingValues(horizontal = 16.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+private fun StudioTabs(tab: StudioTab, onPick: (StudioTab) -> Unit) {
+    val cs = MaterialTheme.colorScheme
+    val tints = listOf(cs.primaryContainer to cs.onPrimaryContainer, cs.tertiaryContainer to cs.onTertiaryContainer, cs.secondaryContainer to cs.onSecondaryContainer, cs.primary to cs.onPrimary)
+    Row(
+        Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 8.dp, vertical = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        StudioTab.entries.forEachIndexed { i, t ->
+            val on = t == tab
+            val (bg, fg) = tints[i]
+            Row(
+                Modifier
+                    .weight(1f)
+                    .height(40.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(if (on) bg else cs.surfaceContainer)
+                    .clickable { onPick(t) }
+                    .testTag("studio-tab-${t.name}"),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                item {
-                    FilterChip(selected = filter == null, onClick = { vm.setStageFilter(null) }, label = { Text("All ${all.size}") })
-                }
-                items(Stage.entries) { stage ->
-                    val count = all.count { it.stage == stage }
-                    FilterChip(
-                        selected = filter == stage,
-                        onClick = { vm.setStageFilter(if (filter == stage) null else stage) },
-                        label = { Text("${stage.label} $count") },
-                    )
-                }
-            }
-            if (designs.isEmpty()) {
-                EmptyDesigns(Modifier.fillMaxSize())
-            } else {
-                LazyColumn(Modifier.fillMaxSize()) {
-                    items(designs, key = { it.id }) { design ->
-                        ListItem(
-                            leadingContent = { Thumbnail(design, Modifier.size(56.dp)) },
-                            headlineContent = { Text(design.name.ifBlank { "Untitled design" }, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                            supportingContent = { Text(design.stage.label) },
-                            trailingContent = { NextStageButton(design, vm) },
-                            modifier = Modifier.clickable { vm.open(design.id) }.testTag("$TAG_DESIGN_PREFIX${design.id}"),
-                        )
-                    }
-                }
+                Icon(t.icon, null, tint = if (on) fg else cs.onSurfaceVariant, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(4.dp))
+                Text(
+                    t.label, style = MaterialTheme.typography.labelLarge, maxLines = 1,
+                    color = if (on) fg else cs.onSurfaceVariant,
+                )
             }
         }
     }
 }
 
-/** Inner screen: the development tracker as a board with one column per stage. */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun DesignBoard(vm: DesignsViewModel) {
+private fun PatternComingSoon(modifier: Modifier) {
+    val cs = MaterialTheme.colorScheme
+    Box(modifier.fillMaxSize().padding(32.dp).testTag("patternSoon"), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Icon(Icons.Filled.ContentCut, null, tint = cs.onSurfaceVariant, modifier = Modifier.size(44.dp))
+            Spacer(Modifier.height(8.dp))
+            Text("Pattern pieces are coming", style = MaterialTheme.typography.titleSmall)
+            Text(
+                "Flat pieces at true size, with seam allowance, grainline, notches and cut labels.",
+                style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+/** Designs as a grid of thumbnails, newest first. */
+@Composable
+private fun DesignGrid(vm: DesignsViewModel, modifier: Modifier) {
     val all by vm.all.collectAsStateWithLifecycle()
-    Scaffold(
-        modifier = Modifier.testTag(TAG_DESIGN_BOARD),
-        topBar = { TopAppBar(title = { Text("Designs") }) },
-        floatingActionButton = { NewDesignFab(vm) },
-    ) { padding ->
+    val cs = MaterialTheme.colorScheme
+    Box(modifier.fillMaxSize().testTag(TAG_DESIGN_LIST)) {
         if (all.isEmpty()) {
-            EmptyDesigns(Modifier.padding(padding).fillMaxSize())
-        } else LazyRow(
-            modifier = Modifier.padding(padding).fillMaxSize(),
-            contentPadding = PaddingValues(12.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            items(Stage.entries) { stage ->
-                val inStage = all.filter { it.stage == stage }
-                Surface(
-                    color = MaterialTheme.colorScheme.surfaceContainer,
-                    shape = RoundedCornerShape(16.dp),
-                    modifier = Modifier.width(200.dp).fillMaxHeight(),
-                ) {
-                    Column {
+            EmptyDesigns(Modifier.fillMaxSize())
+        } else {
+            LazyVerticalGrid(
+                columns = GridCells.Adaptive(150.dp),
+                contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 96.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.fillMaxSize(),
+            ) {
+                gridItems(all, key = { it.id }) { design ->
+                    Column(
+                        Modifier
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(cs.surfaceContainer)
+                            .clickable { vm.open(design.id) }
+                            .testTag("$TAG_DESIGN_PREFIX${design.id}"),
+                    ) {
+                        DesignThumbnail(design, Modifier.fillMaxWidth().aspectRatio(0.75f))
                         Text(
-                            "${stage.label}  ${inStage.size}",
+                            design.name.ifBlank { "Untitled design" },
                             style = MaterialTheme.typography.titleSmall,
-                            modifier = Modifier.padding(12.dp),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
                         )
-                        LazyColumn(
-                            contentPadding = PaddingValues(8.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            items(inStage, key = { it.id }) { design ->
-                                Card(Modifier.fillMaxWidth().clickable { vm.open(design.id) }.testTag("$TAG_DESIGN_PREFIX${design.id}")) {
-                                    Thumbnail(design, Modifier.fillMaxWidth().height(110.dp))
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Text(
-                                            design.name.ifBlank { "Untitled design" },
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                            modifier = Modifier.weight(1f).padding(start = 12.dp),
-                                        )
-                                        NextStageButton(design, vm)
-                                    }
-                                }
-                            }
-                        }
                     }
                 }
             }
         }
+        NewDesignFab(vm, Modifier.align(Alignment.BottomEnd).navigationBarsPadding().padding(16.dp))
     }
 }
 
 @Composable
-private fun NewDesignFab(vm: DesignsViewModel) {
+private fun NewDesignFab(vm: DesignsViewModel, modifier: Modifier = Modifier) {
     var picking by remember { mutableStateOf(false) }
-    FloatingActionButton(onClick = { picking = true }, modifier = Modifier.testTag(TAG_NEW_DESIGN)) {
+    FloatingActionButton(onClick = { picking = true }, modifier = modifier.testTag(TAG_NEW_DESIGN)) {
         Icon(Icons.Filled.Add, contentDescription = "New design")
     }
     if (picking) {
@@ -236,29 +289,21 @@ private fun NewDesignFab(vm: DesignsViewModel) {
 }
 
 @Composable
-private fun NextStageButton(design: Design, vm: DesignsViewModel) {
-    if (design.stage == Stage.DONE) return
-    IconButton(onClick = { vm.advanceStage(design.id) }) {
-        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = "Move to ${design.stage.next().label}")
-    }
-}
-
-@Composable
 private fun EmptyDesigns(modifier: Modifier) {
     Box(modifier, contentAlignment = Alignment.Center) {
-        Text("No designs yet. Tap + to sketch one.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("No designs yet. Tap + to start from a garment.", color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
 @Composable
-private fun Thumbnail(design: Design, modifier: Modifier) {
+internal fun DesignThumbnail(
+    design: Design,
+    modifier: Modifier,
+    ink: Color = MaterialTheme.colorScheme.onSurface,
+    background: Color = MaterialTheme.colorScheme.surface,
+) {
     val shapes = remember(design.shapes) { SketchCodec.decode(design.shapes) }
-    val ink = MaterialTheme.colorScheme.onSurface
-    Canvas(
-        modifier
-            .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(8.dp))
-            .padding(4.dp)
-    ) { drawThumbnail(shapes, ink) }
+    Canvas(modifier.background(background).padding(8.dp)) { drawThumbnail(shapes, ink) }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -300,7 +345,6 @@ private fun SketchEditor(state: SketchState, vm: DesignsViewModel, notesVm: Note
                     )
                 },
                 actions = {
-                    StagePicker(state.stage, vm::setStage)
                     if (!wide) {
                         TextButton(onClick = {
                             if (state.noteId == null) vm.createLinkedNote()
@@ -383,19 +427,6 @@ private fun LinkedNotePane(
                 if (onBack != null) {
                     TextButton(onClick = onBack) { Text("Back to sketch") }
                 }
-            }
-        }
-    }
-}
-
-@Composable
-private fun StagePicker(stage: Stage, onPick: (Stage) -> Unit) {
-    var open by remember { mutableStateOf(false) }
-    Box {
-        AssistChip(onClick = { open = true }, label = { Text(stage.label) })
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            Stage.entries.forEach {
-                DropdownMenuItem(text = { Text(it.label) }, onClick = { onPick(it); open = false })
             }
         }
     }

@@ -25,6 +25,8 @@ class BoroApp : Application() {
     val tasks: TaskRepository by lazy { RoomTaskRepository(database.taskDao()) }
     val look: LookPrefs by lazy { LookPrefs(this) }
     val journals: JournalRepository by lazy { RoomJournalRepository(database.journalDao()) }
+    val projects: com.boro.notes.data.ProjectRepository by lazy { com.boro.notes.data.RoomProjectRepository(database.projectDao()) }
+    val ideas: com.boro.notes.data.IdeaRepository by lazy { com.boro.notes.data.RoomIdeaRepository(database.ideaDao()) }
 
     override fun onCreate() {
         super.onCreate()
@@ -35,6 +37,8 @@ class BoroApp : Application() {
                 repository.purgeTrash(before)
                 designs.purgeTrash(before)
                 journals.purgeTrash(before)
+                projects.purgeTrash(before)
+                ideas.purgeTrash(before)
             }
         }
     }

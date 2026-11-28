@@ -255,14 +255,14 @@ class CoverDesignsLayoutTest {
     }
 }
 
-/** Designs on the inner screen: tracker board, then canvas; the design's note opens full screen. */
+/** Designs on the inner screen: design grid, then canvas; the design's note opens full screen. */
 @RunWith(AndroidJUnit4::class)
 @Config(sdk = [34], qualifiers = "w840dp-h780dp")
 class InnerDesignsLayoutTest {
     @get:Rule val rule = createComposeRule()
 
     @Test
-    fun boardThenCanvasThenFullScreenNote() {
+    fun gridThenCanvasThenFullScreenNote() {
         val notes = FakeNoteRepository()
         val notesVm = NotesViewModel(notes, SavedStateHandle())
         val designsVm = com.boro.notes.ui.DesignsViewModel(
@@ -274,7 +274,7 @@ class InnerDesignsLayoutTest {
 
         rule.onNodeWithTag("navDesigns").performClick()
         rule.waitForIdle()
-        rule.onNodeWithTag(com.boro.notes.ui.TAG_DESIGN_BOARD).assertIsDisplayed()
+        rule.onNodeWithTag(com.boro.notes.ui.TAG_DESIGN_LIST).assertIsDisplayed()
 
         rule.onNodeWithTag("${com.boro.notes.ui.TAG_DESIGN_PREFIX}1").performClick()
         rule.waitForIdle()
@@ -391,16 +391,22 @@ class InnerTasksLayoutTest {
 }
 
 @androidx.compose.runtime.Composable
-private fun testRoot(
+internal fun testRoot(
     notesVm: NotesViewModel,
     designsVm: com.boro.notes.ui.DesignsViewModel,
     journals: FakeJournalRepository = FakeJournalRepository(),
+    projectsVm: com.boro.notes.ui.ProjectsViewModel = androidx.compose.runtime.remember {
+        com.boro.notes.ui.ProjectsViewModel(FakeProjectRepository(), FakeDesignRepository(), FakeIdeaRepository())
+    },
+    ideasVm: com.boro.notes.ui.IdeasViewModel = androidx.compose.runtime.remember { com.boro.notes.ui.IdeasViewModel(FakeIdeaRepository()) },
 ) = com.boro.notes.ui.BoroRoot(
     notesVm,
     designsVm,
     com.boro.notes.ui.TasksViewModel(FakeTaskRepository()),
     com.boro.notes.ui.JournalViewModel(journals),
-    com.boro.notes.ui.TrashViewModel(FakeNoteRepository(), FakeDesignRepository(), journals),
+    com.boro.notes.ui.TrashViewModel(FakeNoteRepository(), FakeDesignRepository(), journals, FakeProjectRepository(), FakeIdeaRepository()),
+    projectsVm,
+    ideasVm,
 )
 
 /** Journals on the cover screen: the picked book stays closed until opened. */

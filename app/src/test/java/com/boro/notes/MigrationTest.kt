@@ -241,6 +241,16 @@ class MigrationTest {
             val tasks = com.boro.notes.data.RoomTaskRepository(database.taskDao())
             tasks.addWish("Coat", 12_000)
             assertEquals(listOf("Coat"), tasks.observeWishes().first().map { it.name })
+            // v9: projects with dated photos, and the Sketch board's ideas.
+            val projects = com.boro.notes.data.RoomProjectRepository(database.projectDao())
+            val projectId = projects.create(com.boro.notes.data.Project(name = "Crane jeans"))
+            projects.addPhoto(projectId, "knee.jpg")
+            assertEquals(listOf("Crane jeans"), projects.observeProjects().first().map { it.name })
+            assertEquals(listOf("knee.jpg"), projects.observePhotos(projectId).first().map { it.file })
+            assertEquals(com.boro.notes.data.ProjectStep.DESIGN, projects.get(projectId)!!.step)
+            val ideas = com.boro.notes.data.RoomIdeaRepository(database.ideaDao())
+            ideas.create(com.boro.notes.data.Idea(title = "Scoop", collection = "Pockets"))
+            assertEquals(listOf("Pockets"), ideas.observeIdeas().first().map { it.collection })
         } finally {
             database.close()
         }
