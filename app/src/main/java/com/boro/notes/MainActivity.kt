@@ -8,6 +8,9 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.boro.notes.ui.BoroRoot
 import com.boro.notes.ui.DesignsViewModel
 import com.boro.notes.ui.NotesViewModel
+import com.boro.notes.ui.TasksViewModel
+import androidx.compose.runtime.getValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.boro.notes.ui.theme.BoroTheme
 
 class MainActivity : ComponentActivity() {
@@ -16,10 +19,12 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         val app = application as BoroApp
         setContent {
-            BoroTheme {
+            val look by app.look.settings.collectAsStateWithLifecycle()
+            BoroTheme(look) {
                 val notesVm: NotesViewModel = viewModel(factory = NotesViewModel.factory(app.repository))
                 val designsVm: DesignsViewModel = viewModel(factory = DesignsViewModel.factory(app.designs, app.repository))
-                BoroRoot(notesVm, designsVm)
+                val tasksVm: TasksViewModel = viewModel(factory = TasksViewModel.factory(app.tasks))
+                BoroRoot(notesVm, designsVm, tasksVm, look, app.look::update)
             }
         }
     }

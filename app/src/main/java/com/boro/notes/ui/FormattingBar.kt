@@ -3,7 +3,9 @@ package com.boro.notes.ui
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -411,43 +413,9 @@ private fun PatternPreview(pattern: PaperPattern, selected: Boolean, modifier: M
     }
 }
 
-private data class Swatch(val name: String, val color: Color, val tag: String, val selected: Boolean)
-
-/** Colour circles in rows of five; transparent shows a slash for "none". */
+/** Colour choices open as a spiralling paint wheel (see [PaletteWheel]). */
 @Composable
-private fun SwatchGrid(swatches: List<Swatch>, onPick: (Swatch) -> Unit) {
-    val cs = MaterialTheme.colorScheme
-    Column(Modifier.padding(horizontal = 12.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        swatches.chunked(5).forEach { row ->
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                row.forEach { s ->
-                    Box(
-                        Modifier
-                            .size(36.dp)
-                            .clip(CircleShape)
-                            .background(s.color)
-                            .border(if (s.selected) 3.dp else 1.dp, if (s.selected) cs.primary else cs.outline, CircleShape)
-                            .clickable { onPick(s) }
-                            .testTag(s.tag)
-                            .semantics { contentDescription = s.name },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        if (s.color == Color.Transparent) {
-                            Canvas(Modifier.size(20.dp)) {
-                                drawLine(Color(0xFFE53935), Offset(0f, size.height), Offset(size.width, 0f), 2.dp.toPx())
-                            }
-                        } else if (s.selected) {
-                            Icon(
-                                Icons.Filled.Check, null, Modifier.size(18.dp),
-                                tint = if (s.color.luminance() > 0.5f || s.color.alpha < 0.6f) Color.Black else Color.White,
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
+private fun SwatchGrid(swatches: List<Swatch>, onPick: (Swatch) -> Unit) = PaletteWheel(swatches, onPick)
 
 @Composable
 private fun MenuLabel(text: String) {
@@ -482,12 +450,14 @@ private fun ToolButton(
     onClick: () -> Unit,
 ) {
     val tint = LocalContentColor.current
+    val source = remember { MutableInteractionSource() }
     Box(
         Modifier
             .size(42.dp)
+            .bounce(source)
             .clip(RoundedCornerShape(12.dp))
             .background(if (selected) tint.copy(alpha = 0.18f) else Color.Transparent)
-            .clickable(enabled = enabled, onClick = onClick)
+            .clickable(interactionSource = source, indication = LocalIndication.current, enabled = enabled, onClick = onClick)
             .testTag(tag),
         contentAlignment = Alignment.Center,
     ) {

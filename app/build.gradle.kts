@@ -48,6 +48,10 @@ android {
     testOptions {
         unitTests.isIncludeAndroidResources = true
         unitTests.all {
+            // Robolectric keeps every text layout's native line breaker alive for the whole JVM,
+            // so long Compose test runs grow the heap. Give it room and start fresh now and then.
+            it.maxHeapSize = "3g"
+            it.forkEvery = 12
             // Show assertion messages in the CI log (the report artifact is hard to open from a phone).
             it.testLogging {
                 events("failed")

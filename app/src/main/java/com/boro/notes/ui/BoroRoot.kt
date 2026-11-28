@@ -15,8 +15,11 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.ui.unit.dp
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.List
-import androidx.compose.material.icons.filled.Create
+import androidx.compose.material.icons.filled.Checkroom
+import androidx.compose.material.icons.filled.EditNote
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.TaskAlt
+import com.boro.notes.ui.theme.LookSettings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -76,14 +79,23 @@ private fun FullScreenNote(note: EditorState, vm: NotesViewModel, fromDesign: Bo
 const val TAG_LIST_TOGGLE = "listToggle"
 
 enum class Section(val label: String, val icon: ImageVector, val tag: String) {
-    NOTES("Notes", Icons.AutoMirrored.Filled.List, "navNotes"),
-    DESIGNS("Designs", Icons.Filled.Create, "navDesigns"),
+    HOME("Home", Icons.Filled.Home, "navHome"),
+    NOTES("Notes", Icons.Filled.EditNote, "navNotes"),
+    DESIGNS("Designs", Icons.Filled.Checkroom, "navDesigns"),
+    TASKS("Tasks", Icons.Filled.TaskAlt, "navTasks"),
 }
 
-/** Top level: Notes and Designs, with a bottom bar on the cover screen and a side rail on the inner screen. */
+/** Top level: Home, Notes, Designs and Tasks, with a bottom bar on the cover screen and a side rail on the inner screen. */
 @Composable
-fun BoroRoot(notesVm: NotesViewModel, designsVm: DesignsViewModel) {
-    var section by rememberSaveable { mutableStateOf(Section.NOTES) }
+fun BoroRoot(
+    notesVm: NotesViewModel,
+    designsVm: DesignsViewModel,
+    tasksVm: TasksViewModel,
+    look: LookSettings = LookSettings(),
+    onLookChange: (LookSettings) -> Unit = {},
+) {
+    var section by rememberSaveable { mutableStateOf(Section.HOME) }
+    BackHandler(enabled = section != Section.HOME) { section = Section.HOME }
     val noteOpen = notesVm.editor.collectAsStateWithLifecycle().value != null
     val sketchOpen = designsVm.sketch.collectAsStateWithLifecycle().value != null
     val fullScreen by notesVm.fullScreen.collectAsStateWithLifecycle()
@@ -106,8 +118,28 @@ fun BoroRoot(notesVm: NotesViewModel, designsVm: DesignsViewModel) {
         val content = @Composable { modifier: Modifier ->
             Box(modifier) {
                 when (section) {
+                    Section.HOME -> {
+                        val notes by notesVm.notes.collectAsStateWithLifecycle()
+                        val designs by designsVm.all.collectAsStateWithLifecycle()
+                        val habits by tasksVm.habits.collectAsStateWithLifecycle()
+                        val todos by tasksVm.todos.collectAsStateWithLifecycle()
+                        val todayIndex = tasksVm.todayDate().dayOfWeek.value - 1
+                        HomeScreen(
+                            stats = HomeStats(
+                                notes = notes.size,
+                                designs = designs.size,
+                                punchCards = habits.size,
+                                punchedToday = if (tasksVm.isThisWeek) habits.count { it.punched[todayIndex] } else 0,
+                                openTodos = todos.count { !it.done },
+                            ),
+                            look = look,
+                            onLookChange = onLookChange,
+                            onOpen = { section = it },
+                        )
+                    }
                     Section.NOTES -> NotesScreen(notesVm)
                     Section.DESIGNS -> DesignsScreen(designsVm, notesVm, wide)
+                    Section.TASKS -> TasksScreen(tasksVm, wide)
                 }
             }
         }
@@ -132,6 +164,7 @@ fun BoroRoot(notesVm: NotesViewModel, designsVm: DesignsViewModel) {
             val showBar = when (section) {
                 Section.NOTES -> !noteOpen
                 Section.DESIGNS -> !sketchOpen
+                Section.HOME, Section.TASKS -> true
             }
             Column(Modifier.fillMaxSize()) {
                 content(
