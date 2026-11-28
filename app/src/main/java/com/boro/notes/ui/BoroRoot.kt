@@ -98,6 +98,8 @@ fun BoroRoot(
     tasksVm: TasksViewModel,
     journalVm: JournalViewModel,
     trashVm: TrashViewModel,
+    projectsVm: ProjectsViewModel,
+    ideasVm: IdeasViewModel,
     look: LookSettings = LookSettings(),
     onLookChange: (LookSettings) -> Unit = {},
 ) {
@@ -112,7 +114,7 @@ fun BoroRoot(
     val bookOpen = journalVm.openId.collectAsStateWithLifecycle().value != null
     val bookView by journalVm.bookView.collectAsStateWithLifecycle()
     val noteOpen = notesVm.editor.collectAsStateWithLifecycle().value != null
-    val sketchOpen = designsVm.sketch.collectAsStateWithLifecycle().value != null
+    val sketchOpen = designsEditorOpen(designsVm, projectsVm, ideasVm)
     val fullScreen by notesVm.fullScreen.collectAsStateWithLifecycle()
     val openNote = notesVm.editor.collectAsStateWithLifecycle().value
 
@@ -156,7 +158,7 @@ fun BoroRoot(
                         )
                     }
                     Section.NOTES -> NotesScreen(notesVm)
-                    Section.DESIGNS -> DesignsScreen(designsVm, notesVm, wide)
+                    Section.DESIGNS -> DesignsScreen(designsVm, notesVm, wide, projectsVm, ideasVm)
                     Section.TASKS -> TasksScreen(tasksVm, wide)
                     Section.JOURNAL -> JournalScreen(journalVm, wide)
                 }

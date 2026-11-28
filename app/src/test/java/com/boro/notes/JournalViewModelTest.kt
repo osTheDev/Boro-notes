@@ -104,7 +104,7 @@ class JournalViewModelTest {
     @Test fun trashAndRestore() = runTest(dispatcher) {
         val notes = FakeNoteRepository(listOf(Note(id = 1, title = "Old note")))
         val designs = FakeDesignRepository()
-        val trash = TrashViewModel(notes, designs, repo)
+        val trash = TrashViewModel(notes, designs, repo, FakeProjectRepository(), FakeIdeaRepository())
         vm.createJournal("Days", 0, 0)
         advanceUntilIdle()
         vm.newPageToday()

@@ -81,7 +81,7 @@ suspend fun importImage(context: Context, uri: Uri): String? = withContext(Dispa
     }.getOrNull()
 }
 
-private fun loadImage(context: Context, name: String): ImageBitmap? = runCatching {
+internal fun loadImage(context: Context, name: String): ImageBitmap? = runCatching {
     val file = File(imagesDir(context), name)
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
     BitmapFactory.decodeFile(file.path, bounds)

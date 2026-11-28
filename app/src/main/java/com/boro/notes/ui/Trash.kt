@@ -23,6 +23,8 @@ import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.EditNote
 import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Inventory2
+import androidx.compose.material.icons.filled.Brush
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -51,6 +53,8 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.boro.notes.data.DesignRepository
 import com.boro.notes.data.JournalRepository
 import com.boro.notes.data.NoteRepository
+import com.boro.notes.data.ProjectRepository
+import com.boro.notes.data.IdeaRepository
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
@@ -68,6 +72,8 @@ enum class TrashKind(val label: String, val icon: ImageVector) {
     DESIGN("Design", Icons.Filled.Checkroom),
     JOURNAL("Journal", Icons.Filled.AutoStories),
     PAGE("Journal page", Icons.Filled.Description),
+    PROJECT("Project", Icons.Filled.Inventory2),
+    IDEA("Sketch", Icons.Filled.Brush),
 }
 
 data class TrashItem(val kind: TrashKind, val id: Long, val title: String, val deletedAt: Long)
@@ -77,14 +83,22 @@ class TrashViewModel(
     private val notes: NoteRepository,
     private val designs: DesignRepository,
     private val journals: JournalRepository,
+    private val projects: ProjectRepository,
+    private val ideas: IdeaRepository,
 ) : ViewModel() {
+    private val studio = combine(projects.observeTrash(), ideas.observeTrash()) { pr, i ->
+        pr.map { TrashItem(TrashKind.PROJECT, it.id, it.name.ifBlank { "Untitled project" }, it.deletedAt ?: 0) } +
+            i.map { TrashItem(TrashKind.IDEA, it.id, it.title.ifBlank { if (it.kind == com.boro.notes.data.IdeaKind.SKETCH) "Sketch" else "Collage" }, it.deletedAt ?: 0) }
+    }
+
     val items: StateFlow<List<TrashItem>> = combine(
         notes.observeTrash(),
         designs.observeTrash(),
         journals.observeTrashedJournals(),
         journals.observeTrashedPages(),
-    ) { n, d, j, p ->
-        (n.map { TrashItem(TrashKind.NOTE, it.id, it.title.ifBlank { it.body.lineSequence().firstOrNull().orEmpty() }.ifBlank { "Untitled note" }, it.deletedAt ?: 0) } +
+        studio,
+    ) { n, d, j, p, st ->
+        (st + n.map { TrashItem(TrashKind.NOTE, it.id, it.title.ifBlank { it.body.lineSequence().firstOrNull().orEmpty() }.ifBlank { "Untitled note" }, it.deletedAt ?: 0) } +
             d.map { TrashItem(TrashKind.DESIGN, it.id, it.name.ifBlank { "Untitled design" }, it.deletedAt ?: 0) } +
             j.map { TrashItem(TrashKind.JOURNAL, it.id, it.title.ifBlank { "Journal" }, it.deletedAt ?: 0) } +
             p.map { TrashItem(TrashKind.PAGE, it.id, it.title.ifBlank { java.time.LocalDate.ofEpochDay(it.day).toString() }, it.deletedAt ?: 0) })
@@ -97,6 +111,8 @@ class TrashViewModel(
             TrashKind.DESIGN -> designs.restore(item.id)
             TrashKind.JOURNAL -> journals.restoreJournal(item.id)
             TrashKind.PAGE -> journals.restorePage(item.id)
+            TrashKind.PROJECT -> projects.restore(item.id)
+            TrashKind.IDEA -> ideas.restore(item.id)
         }
     }
 
@@ -110,12 +126,20 @@ class TrashViewModel(
             TrashKind.DESIGN -> designs.delete(item.id)
             TrashKind.JOURNAL -> journals.deleteJournalForever(item.id)
             TrashKind.PAGE -> journals.deletePage(item.id)
+            TrashKind.PROJECT -> projects.delete(item.id)
+            TrashKind.IDEA -> ideas.delete(item.id)
         }
     }
 
     companion object {
-        fun factory(notes: NoteRepository, designs: DesignRepository, journals: JournalRepository): ViewModelProvider.Factory =
-            viewModelFactory { initializer { TrashViewModel(notes, designs, journals) } }
+        fun factory(
+            notes: NoteRepository,
+            designs: DesignRepository,
+            journals: JournalRepository,
+            projects: ProjectRepository,
+            ideas: IdeaRepository,
+        ): ViewModelProvider.Factory =
+            viewModelFactory { initializer { TrashViewModel(notes, designs, journals, projects, ideas) } }
 
         /** Whole days left before [deletedAt] is emptied out of the Trash. */
         fun daysLeft(deletedAt: Long, now: Long = System.currentTimeMillis()): Int {

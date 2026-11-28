@@ -7,12 +7,14 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [Note::class, Design::class, Habit::class, HabitCheck::class, Todo::class, Journal::class, JournalPage::class, Wish::class], version = 8, exportSchema = true)
+@Database(entities = [Note::class, Design::class, Habit::class, HabitCheck::class, Todo::class, Journal::class, JournalPage::class, Wish::class, Project::class, ProjectPhoto::class, Idea::class], version = 9, exportSchema = true)
 abstract class NoteDatabase : RoomDatabase() {
     abstract fun noteDao(): NoteDao
     abstract fun designDao(): DesignDao
     abstract fun taskDao(): TaskDao
     abstract fun journalDao(): JournalDao
+    abstract fun projectDao(): ProjectDao
+    abstract fun ideaDao(): IdeaDao
 
     companion object {
         /** Checkpoint 2 added designs (garment sketches). */
@@ -98,9 +100,31 @@ abstract class NoteDatabase : RoomDatabase() {
             }
         }
 
+        /** The Designs tab's Projects (with dated photos) and the Sketch board's ideas. */
+        val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `projects` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`name` TEXT NOT NULL, `step` TEXT NOT NULL, `cover` TEXT, `notes` TEXT NOT NULL, " +
+                        "`todos` TEXT NOT NULL, `materials` TEXT NOT NULL, `links` TEXT NOT NULL, `parentId` INTEGER, " +
+                        "`createdAt` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, `deletedAt` INTEGER)"
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `project_photos` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`projectId` INTEGER NOT NULL, `file` TEXT NOT NULL, `caption` TEXT NOT NULL, " +
+                        "`pins` TEXT NOT NULL, `marks` TEXT NOT NULL, `takenAt` INTEGER NOT NULL)"
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `ideas` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`kind` TEXT NOT NULL, `title` TEXT NOT NULL, `note` TEXT NOT NULL, `collection` TEXT, " +
+                        "`content` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, `deletedAt` INTEGER)"
+                )
+            }
+        }
+
         fun create(context: Context, name: String = "boro-notes.db"): NoteDatabase =
             Room.databaseBuilder(context, NoteDatabase::class.java, name)
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9)
                 .build()
     }
 }
