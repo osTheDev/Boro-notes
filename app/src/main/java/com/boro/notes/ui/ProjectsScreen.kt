@@ -290,6 +290,7 @@ fun ProjectEditor(
                 item {
                     BoxWithConstraints(Modifier.fillMaxWidth()) {
                         val wide = maxWidth >= 560.dp
+                        val coverWidth = minOf(maxWidth * 0.45f, 420.dp)
                         val coverBox: @Composable (Modifier) -> Unit = { m ->
                             Box(
                                 m.aspectRatio(1f).clip(RoundedCornerShape(16.dp)).background(cs.surfaceVariant)
@@ -357,7 +358,7 @@ fun ProjectEditor(
                         }
                         if (wide) {
                             Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                                coverBox(Modifier.width(minOf(maxWidth * 0.45f, 420.dp)))
+                                coverBox(Modifier.width(coverWidth))
                                 Box(Modifier.weight(1f)) { details() }
                             }
                         } else {
