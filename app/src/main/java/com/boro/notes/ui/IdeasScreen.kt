@@ -100,6 +100,14 @@ import com.boro.notes.data.Design
 import com.boro.notes.data.Idea
 import com.boro.notes.data.IdeaKind
 import com.boro.notes.studio.Collage
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.filled.PushPin
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.material.icons.filled.Crop
 import androidx.compose.material.icons.filled.ContentCut
 import androidx.compose.material.icons.filled.Timeline
@@ -375,6 +383,122 @@ private fun BoardChip(text: String, bg: Color, fg: Color, tag: String, onClick: 
     )
 }
 
+/** One collage item full screen: a photo you can pinch to zoom, a big sticky note, a sketch or a design. */
+@Composable
+private fun CollageItemViewer(item: CollageItem, ideas: List<Idea>, designs: List<Design>, onChange: (CollageItem) -> Unit, onClose: () -> Unit) {
+    var zoom by remember { mutableStateOf(1f) }
+    var pan by remember { mutableStateOf(Offset.Zero) }
+    var pinning by remember { mutableStateOf(false) }
+    var openPin by remember { mutableStateOf<Int?>(null) }
+    var newPinAt by remember { mutableStateOf<Offset?>(null) }
+    var editPin by remember { mutableStateOf<Int?>(null) }
+    val current by rememberUpdatedState(item)
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = onClose,
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
+    ) {
+        Surface(Modifier.fillMaxSize().testTag("collage-viewer"), color = Color(0xFF151515), contentColor = Color.White) {
+            Box(Modifier.fillMaxSize().systemBarsPadding()) {
+                BoxWithConstraints(
+                    Modifier.fillMaxSize().padding(16.dp)
+                        .pointerInput(Unit) {
+                            detectTransformGestures { _, move, scale, _ ->
+                                zoom = (zoom * scale).coerceIn(1f, 6f)
+                                pan = if (zoom == 1f) Offset.Zero else pan + move
+                            }
+                        }
+                        .pointerInput(Unit) { detectTapGestures(onDoubleTap = { zoom = 1f; pan = Offset.Zero }) },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    val big = minOf(maxWidth, maxHeight)
+                    val maxW = maxWidth
+                    val maxH = maxHeight
+                    Box(Modifier.graphicsLayer { scaleX = zoom; scaleY = zoom; translationX = pan.x; translationY = pan.y }, contentAlignment = Alignment.Center) {
+                        when (item.kind) {
+                            CollageKind.PHOTO -> {
+                                val bitmap = rememberStoredImage(item.ref)
+                                val aspect = bitmap?.let { it.width.toFloat() / it.height.coerceAtLeast(1) } ?: 1f
+                                val w = if (maxW / maxH > aspect) maxH * aspect else maxW
+                                val h = w / aspect
+                                Box(
+                                    Modifier.size(w, h).pointerInput(pinning) {
+                                        detectTapGestures { at ->
+                                            if (pinning) newPinAt = Offset(at.x / size.width, at.y / size.height) else openPin = null
+                                        }
+                                    },
+                                ) {
+                                    if (bitmap != null) androidx.compose.foundation.Image(bitmap, null, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
+                                    item.pins.forEachIndexed { i, pin ->
+                                        Box(
+                                            Modifier
+                                                .offset(w * pin.x - 14.dp, h * pin.y - 14.dp)
+                                                .size(28.dp)
+                                                .background(if (openPin == i) MaterialTheme.colorScheme.primary else YARN, CircleShape)
+                                                .border(2.dp, Color.White, CircleShape)
+                                                .clickable { openPin = if (openPin == i) null else i }
+                                                .testTag("collage-pin-$i"),
+                                            contentAlignment = Alignment.Center,
+                                        ) { Text("${i + 1}", color = Color.White, style = MaterialTheme.typography.labelMedium) }
+                                    }
+                                }
+                            }
+                            CollageKind.TEXT -> {
+                                val ink = if (item.color == 0xFF1E2A47) Color(0xFFF4F1EA) else Color(0xFF2B2B2B)
+                                Box(Modifier.width(big).heightIn(min = big * 0.8f).background(Color(item.color)).padding(24.dp)) {
+                                    Text(item.text.ifBlank { "Note" }, color = ink, style = MaterialTheme.typography.headlineSmall)
+                                }
+                            }
+                            CollageKind.IDEA, CollageKind.DESIGN -> Box(Modifier.width(big)) {
+                                CollageItemContent(item.copy(w = 1f), ideas, designs, big, depth = 0)
+                            }
+                        }
+                    }
+                }
+                IconButton(onClick = onClose, modifier = Modifier.align(Alignment.TopEnd).padding(4.dp).testTag("collage-viewer-close")) {
+                    Icon(Icons.Filled.Close, "Close", tint = Color.White)
+                }
+                if (item.kind == CollageKind.PHOTO) {
+                    Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                        openPin?.let { i -> item.pins.getOrNull(i) }?.let { pin ->
+                            val i = openPin!!
+                            Row(
+                                Modifier.fillMaxWidth().background(Color.White.copy(alpha = 0.12f), RoundedCornerShape(12.dp)).padding(start = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text("${i + 1}. ${pin.text}", modifier = Modifier.weight(1f).padding(vertical = 8.dp))
+                                TextButton(onClick = { editPin = i }) { Text("Edit", color = Color.White) }
+                                IconButton(onClick = { onChange(current.copy(pins = current.pins.filterIndexed { j, _ -> j != i })); openPin = null }) {
+                                    Icon(Icons.Filled.Delete, "Remove pin", tint = Color.White)
+                                }
+                            }
+                            Spacer(Modifier.height(8.dp))
+                        }
+                        Row(
+                            Modifier.clip(RoundedCornerShape(50)).background(if (pinning) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.15f))
+                                .clickable { pinning = !pinning; openPin = null }.padding(horizontal = 16.dp, vertical = 8.dp).testTag("collage-pin-mode"),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(Icons.Filled.PushPin, null, tint = Color.White, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text(if (pinning) "Tap a spot to pin a note · Done" else "Pin a note", color = Color.White, style = MaterialTheme.typography.labelLarge)
+                        }
+                    }
+                }
+            }
+        }
+    }
+    newPinAt?.let { at ->
+        TextPrompt("Pin a note", "Rivet here, fade this seam…", "", singleLine = false, onDone = { text ->
+            if (text.isNotBlank()) onChange(current.copy(pins = current.pins + com.boro.notes.studio.CollagePin(at.x, at.y, text.trim())))
+        }, onDismiss = { newPinAt = null })
+    }
+    editPin?.let { i ->
+        TextPrompt("Edit note", "", current.pins.getOrNull(i)?.text.orEmpty(), singleLine = false, onDone = { text ->
+            onChange(current.copy(pins = current.pins.mapIndexed { j, p -> if (j == i) p.copy(text = text.trim()) else p }))
+        }, onDismiss = { editPin = null })
+    }
+}
+
 /** The red of the yarn tied between board items. */
 private val YARN = Color(0xFFB3261E)
 
@@ -398,9 +522,12 @@ fun CollageView(
     zoom: Float = 1f,
     pan: Offset = Offset.Zero,
     onView: ((Float, Offset) -> Unit)? = null,
+    /** View mode: nothing moves; tapping an item opens it large. */
+    onOpen: ((CollageItem) -> Unit)? = null,
 ) {
     val paper = Color(collage.paper ?: 0xFFF6EFDF)
     val editing = onSelect != null && onMove != null
+    val viewOnly = onOpen != null
     val currentZoom by rememberUpdatedState(zoom)
     val currentPan by rememberUpdatedState(pan)
     BoxWithConstraints(
@@ -437,7 +564,7 @@ fun CollageView(
         val board = maxWidth
         val slots = remember(collage) { Board.mosaicSlots(collage) }
         // A thumbnail fits everything; the editor uses its own zoom and pan.
-        val (viewZoom, viewPan) = if (editing) zoom to pan else {
+        val (viewZoom, viewPan) = if (editing || viewOnly) zoom to pan else {
             val b = remember(collage) { Board.bounds(collage) }
             val aspect = with(LocalDensity.current) { maxHeight.toPx() } / boardPx
             val z = minOf(1f / b.w, aspect / b.h)
@@ -464,7 +591,8 @@ fun CollageView(
                         .offset { IntOffset((x * boardPx).roundToInt(), (y * boardPx).roundToInt()) }
                         .width(board * w)
                         .then(
-                            if (editing) Modifier.pointerInput(item.id, boardPx, slot != null) {
+                            if (viewOnly) Modifier.pointerInput(item.id) { detectTapGestures { onOpen!!(latest) } }
+                            else if (editing) Modifier.pointerInput(item.id, boardPx, slot != null) {
                                 awaitEachGesture {
                                     val down = awaitFirstDown()
                                     onSelect!!(latest.id)
@@ -552,6 +680,21 @@ private fun CollageItemContent(item: CollageItem, ideas: List<Idea>, designs: Li
                 } else {
                     Box(Modifier.fillMaxWidth().aspectRatio(1f / tile).background(Color.Black.copy(alpha = 0.08f)))
                 }
+            } else if (bitmap != null && item.pins.isNotEmpty()) {
+                Box {
+                    androidx.compose.foundation.Image(
+                        bitmap, null, contentScale = ContentScale.FillWidth,
+                        modifier = Modifier.fillMaxWidth().aspectRatio(bitmap.width.toFloat() / bitmap.height.coerceAtLeast(1)),
+                    )
+                    // Pinned spots show as small red dots on the board.
+                    Canvas(Modifier.matchParentSize()) {
+                        item.pins.forEach { p ->
+                            val c = Offset(p.x * size.width, p.y * size.height)
+                            drawCircle(YARN, size.width * 0.025f, c)
+                            drawCircle(Color.White, size.width * 0.025f, c, style = androidx.compose.ui.graphics.drawscope.Stroke(size.width * 0.006f))
+                        }
+                    }
+                }
             } else if (bitmap != null) {
                 androidx.compose.foundation.Image(
                     bitmap, null, contentScale = ContentScale.FillWidth,
@@ -584,8 +727,10 @@ private fun CollageItemContent(item: CollageItem, ideas: List<Idea>, designs: Li
         CollageKind.TEXT -> {
             val bg = Color(item.color)
             val ink = if (item.color == 0xFF1E2A47) Color(0xFFF4F1EA) else Color(0xFF2B2B2B)
-            Box(Modifier.fillMaxWidth().background(bg).padding(board * 0.02f)) {
-                Text(item.text.ifBlank { "Note" }, color = ink, fontSize = (board.value * 0.04f).coerceAtLeast(4f).sp, lineHeight = (board.value * 0.05f).coerceAtLeast(5f).sp)
+            // Sticky notes are square-ish and their text grows with them.
+            val k = (item.w / 0.3f).coerceIn(0.6f, 4f)
+            Box(Modifier.fillMaxWidth().heightIn(min = board * item.w * 0.8f).background(bg).padding(board * 0.02f * k)) {
+                Text(item.text.ifBlank { "Note" }, color = ink, fontSize = (board.value * 0.04f * k).coerceAtLeast(4f).sp, lineHeight = (board.value * 0.05f * k).coerceAtLeast(5f).sp)
             }
         }
     }
@@ -606,6 +751,9 @@ private fun CollageEditor(draft: IdeaDraft, vm: IdeasViewModel, collections: Lis
     var editingText by remember { mutableStateOf<CollageItem?>(null) }
     /** The item yarn is being tied from; the next item tapped gets the other end. */
     var tyingFrom by remember { mutableStateOf<String?>(null) }
+    /** View mode: nothing moves, and a tap opens a photo, note, sketch or design large. */
+    var viewMode by rememberSaveable { mutableStateOf(false) }
+    var opened by remember { mutableStateOf<CollageItem?>(null) }
     var zoom by remember(draft.idea.id) { mutableStateOf(1f) }
     var pan by remember(draft.idea.id) { mutableStateOf(Offset.Zero) }
     val collage = draft.collage
@@ -655,7 +803,7 @@ private fun CollageEditor(draft: IdeaDraft, vm: IdeasViewModel, collections: Lis
                             }
                         },
                         onGestureStart = vm::checkpoint,
-                        onMove = { vm.updateItem(it) },
+                        onMove = if (viewMode) null else { it -> vm.updateItem(it) },
                         onMoveMosaic = { dx, dy, scale ->
                             vm.changeCollage(record = false) { c ->
                                 c.copy(mosaic = c.mosaic.copy(x = c.mosaic.x + dx, y = c.mosaic.y + dy, w = (c.mosaic.w * scale).coerceIn(0.2f, 6f)))
@@ -664,6 +812,7 @@ private fun CollageEditor(draft: IdeaDraft, vm: IdeasViewModel, collections: Lis
                         zoom = zoom,
                         pan = pan,
                         onView = { z, p -> zoom = z; pan = p },
+                        onOpen = if (viewMode) { it -> opened = it } else null,
                     )
                 }
                 Row(Modifier.align(Alignment.TopEnd).padding(10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -680,6 +829,11 @@ private fun CollageEditor(draft: IdeaDraft, vm: IdeasViewModel, collections: Lis
                 horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
+                if (viewMode) {
+                    ToolGroup(cs.primaryContainer, cs.onPrimaryContainer) {
+                        LabeledTool(Icons.Filled.Edit, "Back to editing", "collage-edit-mode") { viewMode = false }
+                    }
+                } else {
                 // Add things: one popup.
                 ToolGroup(cs.primaryContainer, cs.onPrimaryContainer) {
                     ToolPopup(Icons.Filled.Add, "Add to the board", "collage-add") { close ->
@@ -702,6 +856,12 @@ private fun CollageEditor(draft: IdeaDraft, vm: IdeasViewModel, collections: Lis
                             accent = if (selectedItem.kind == CollageKind.TEXT) Color(selectedItem.color) else null,
                         ) { close ->
                             if (selectedItem.kind == CollageKind.TEXT) {
+                                PopupSection("Note size · or pinch it") {
+                                    val sizes = listOf("Small" to 0.2f, "Medium" to 0.3f, "Large" to 0.45f, "Huge" to 0.7f)
+                                    ChoiceChips(sizes.map { it.first }, sizes.indexOfFirst { it.second == selectedItem.w }, "note-size") { i ->
+                                        vm.updateItem(selectedItem.copy(w = sizes[i].second), record = true)
+                                    }
+                                }
                                 PopupSection("Note colour") {
                                     ColourDots(NOTE_COLOURS, selectedItem.color, "note-colour") { c ->
                                         vm.updateItem(selectedItem.copy(color = c), record = true)
@@ -773,8 +933,12 @@ private fun CollageEditor(draft: IdeaDraft, vm: IdeasViewModel, collections: Lis
                             }
                         }
                     }
+                    ToolButton(Icons.Filled.Visibility, "View mode: tap to see things large", "collage-view-mode") {
+                        viewMode = true; selected = null; tyingFrom = null
+                    }
                     ToolButton(Icons.AutoMirrored.Filled.Undo, "Undo", "collage-undo", enabled = draft.canUndo) { vm.undo() }
                     ToolButton(Icons.AutoMirrored.Filled.Redo, "Redo", "collage-redo", enabled = draft.canRedo) { vm.redo() }
+                }
                 }
             }
             if (collage.isEmpty) {
@@ -786,6 +950,12 @@ private fun CollageEditor(draft: IdeaDraft, vm: IdeasViewModel, collections: Lis
                 )
             }
         }
+    }
+
+    opened?.let { item ->
+        // Follow the saved item so pins added in the viewer show straight away.
+        val live = collage.items.firstOrNull { it.id == item.id } ?: item
+        CollageItemViewer(live, ideas, designs, onChange = { vm.updateItem(it, record = true) }) { opened = null }
     }
 
     picking?.let { kind ->

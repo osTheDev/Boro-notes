@@ -163,5 +163,15 @@ class InnerStudioLayoutTest {
         rule.waitForIdle()
         assertEquals(4, ideasVm.open.value!!.collage.mosaic.columns)
         assertTrue(ideasVm.open.value!!.collage.mosaic.on)
+        // View mode: nothing moves, and a tap opens the item large.
+        rule.onNodeWithTag("collage-view-mode").performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag("collage-edit-mode").assertIsDisplayed()
+        rule.onNodeWithTag("collage-item-${items.single().id}").performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag("collage-viewer").assertIsDisplayed()
+        rule.onNodeWithTag("collage-viewer-close").performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag("collage-viewer").assertDoesNotExist()
     }
 }

@@ -103,7 +103,13 @@ data class CollageItem(
     val color: Long = 0xFFF3E3A6,
     /** A photo laid out in the collage's [Mosaic] grid instead of where it was dropped. */
     val inMosaic: Boolean = false,
+    /** Notes pinned to spots on a photo. */
+    val pins: List<CollagePin> = emptyList(),
 )
+
+/** A note pinned at ([x], [y]) on a photo, as fractions of its width and height. */
+@Serializable
+data class CollagePin(val x: Float, val y: Float, val text: String)
 
 /** Red yarn tied between two items, conspiracy-board style. */
 @Serializable

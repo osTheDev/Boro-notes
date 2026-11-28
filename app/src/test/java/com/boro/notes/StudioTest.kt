@@ -205,6 +205,8 @@ class StudioTest {
         val gone = com.boro.notes.studio.Board.remove(c, "n")
         assertTrue(gone.links.isEmpty())
         assertEquals(c, StudioJson.collage(StudioJson.encode(c)))
+        val pinned = c.copy(items = c.items.map { if (it.id == "p1") it.copy(pins = listOf(com.boro.notes.studio.CollagePin(0.3f, 0.6f, "Bar tack"))) else it })
+        assertEquals(pinned, StudioJson.collage(StudioJson.encode(pinned)))
         // Old collages (no yarn, no mosaic) still open.
         assertEquals(1, StudioJson.collage("""{"items":[{"id":"a","kind":"TEXT"}]}""").items.size)
     }
