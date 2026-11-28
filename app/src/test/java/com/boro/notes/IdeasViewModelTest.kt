@@ -54,8 +54,8 @@ class IdeasViewModelTest {
     fun strokesSaveAndUndo() = runTest(dispatcher) {
         vm.create(IdeaKind.SKETCH)
         advanceUntilIdle()
-        vm.changePad { it.copy(strokes = it.strokes + box) }
-        vm.changePad { p -> p.copy(strokes = p.strokes.map { it.copy(fill = 2) }) }
+        vm.changePad { Pad.editActive(it) { s -> s + box } }
+        vm.changePad { p -> Pad.editActive(p) { s -> s.map { it.copy(fill = 2) } } }
         assertTrue(vm.open.value!!.canUndo)
         vm.undo()
         assertNull(vm.open.value!!.pad.strokes.single().fill)
@@ -84,7 +84,7 @@ class IdeasViewModelTest {
     fun collectionsGroupAndFilter() = runTest(dispatcher) {
         vm.create(IdeaKind.SKETCH)
         advanceUntilIdle()
-        vm.changePad { it.copy(strokes = listOf(box)) }
+        vm.changePad { Pad.editActive(it) { listOf(box) } }
         vm.setCollection("Pockets")
         vm.close()
         advanceUntilIdle()

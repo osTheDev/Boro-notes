@@ -35,12 +35,30 @@ data class PadStroke(
 }
 
 /**
- * A loose sketch, optionally traced over a faded photo. Units: 1.0 is the width of a new pad, which
- * starts [padW] by [padH] and can grow in any direction.
+ * One layer of a sketch, like tracing paper: rough it out on one, then perfect it on another.
+ * [alpha] fades the whole layer; hidden layers aren't drawn.
+ */
+@Serializable
+data class PadLayer(
+    val id: String,
+    val name: String = "Layer",
+    val strokes: List<PadStroke> = emptyList(),
+    val alpha: Float = 1f,
+    val visible: Boolean = true,
+)
+
+/**
+ * A loose sketch in [layers] (bottom first), optionally traced over a faded photo. Units: 1.0 is
+ * the width of a new pad, which starts [padW] by [padH] and can grow in any direction.
  */
 @Serializable
 data class SketchPad(
-    val strokes: List<PadStroke> = emptyList(),
+    val layers: List<PadLayer> = listOf(PadLayer("1", "Layer 1")),
+    /** The layer new marks go on. */
+    val active: Int = 0,
+    /** Strokes saved before layers existed; [StudioJson.pad] moves them into the first layer. */
+    @kotlinx.serialization.SerialName("strokes")
+    val legacyStrokes: List<PadStroke> = emptyList(),
     /** Photo to trace over (file name in filesDir/images). */
     val photo: String? = null,
     val photoAlpha: Float = 0.45f,
@@ -53,7 +71,11 @@ data class SketchPad(
     val padW: Float = 1f,
     val padH: Float = PAD_HEIGHT,
 ) {
-    val isEmpty get() = strokes.isEmpty() && photo == null
+    /** Every stroke on every layer, bottom first. */
+    val strokes: List<PadStroke> get() = layers.flatMap { it.strokes }
+    val activeIndex: Int get() = active.coerceIn(0, (layers.size - 1).coerceAtLeast(0))
+    val activeLayer: PadLayer get() = layers.getOrElse(activeIndex) { PadLayer("1", "Layer 1") }
+    val isEmpty get() = layers.all { it.strokes.isEmpty() } && photo == null
 }
 
 /** A side of the pad, for growing it. */
@@ -88,7 +110,13 @@ data class Collage(val items: List<CollageItem> = emptyList(), val paper: Long? 
 
 object StudioJson {
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
-    fun pad(s: String): SketchPad = runCatching { json.decodeFromString<SketchPad>(s) }.getOrDefault(SketchPad())
+    fun pad(s: String): SketchPad = runCatching { json.decodeFromString<SketchPad>(s) }.getOrDefault(SketchPad()).let { p ->
+        when {
+            p.legacyStrokes.isNotEmpty() -> p.copy(legacyStrokes = emptyList(), layers = listOf(PadLayer("1", "Layer 1", p.legacyStrokes)), active = 0)
+            p.layers.isEmpty() -> p.copy(layers = listOf(PadLayer("1", "Layer 1")), active = 0)
+            else -> p
+        }
+    }
     fun collage(s: String): Collage = runCatching { json.decodeFromString<Collage>(s) }.getOrDefault(Collage())
     fun encode(p: SketchPad) = json.encodeToString(p)
     fun encode(c: Collage) = json.encodeToString(c)
@@ -125,7 +153,7 @@ object Pad {
 
     private fun SketchPad.shifted(dx: Float, dy: Float): SketchPad =
         if (dx == 0f && dy == 0f) this else copy(
-            strokes = strokes.map { s -> s.copy(points = s.points.mapIndexed { i, v -> if (i % 2 == 0) v + dx else v + dy }) },
+            layers = layers.map { l -> l.copy(strokes = l.strokes.map { s -> s.copy(points = s.points.mapIndexed { i, v -> if (i % 2 == 0) v + dx else v + dy }) }) },
             photoX = photoX + dx,
             photoY = photoY + dy,
         )
@@ -220,6 +248,239 @@ object Pad {
                 } || (strokes[i].closed && strokes[i].fill != null && path.any { contains(pts, it) })
             }
         }.toSet()
+
+    // ---- Layers ----
+
+    /** Changes the strokes of the active layer (showing it, so you see what you did). */
+    fun editActive(pad: SketchPad, change: (List<PadStroke>) -> List<PadStroke>): SketchPad {
+        val i = pad.activeIndex
+        val layers = pad.layers.ifEmpty { listOf(PadLayer("1", "Layer 1")) }
+        return pad.copy(layers = layers.mapIndexed { j, l -> if (j == i) l.copy(strokes = change(l.strokes), visible = true) else l }, active = i)
+    }
+
+    fun updateLayer(pad: SketchPad, index: Int, change: (PadLayer) -> PadLayer): SketchPad =
+        pad.copy(layers = pad.layers.mapIndexed { j, l -> if (j == index) change(l) else l })
+
+    /** A new empty layer just above the active one, which becomes active. */
+    fun addLayer(pad: SketchPad): SketchPad {
+        val n = (pad.layers.mapNotNull { it.name.removePrefix("Layer ").toIntOrNull() }.maxOrNull() ?: pad.layers.size) + 1
+        val id = ((pad.layers.mapNotNull { it.id.toIntOrNull() }.maxOrNull() ?: 0) + 1).toString()
+        val at = (pad.activeIndex + 1).coerceAtMost(pad.layers.size)
+        val layers = pad.layers.toMutableList().apply { add(at, PadLayer(id, "Layer $n")) }
+        return pad.copy(layers = layers, active = at)
+    }
+
+    /**
+     * The fill tool at [at] on the active layer: recolours the closed shape there, or else fills the
+     * area the lines enclose (this layer's lines first, then every shown layer's) as a fill of its
+     * own under the lines. Returns [pad] unchanged when there's nothing closed to fill.
+     */
+    fun fill(pad: SketchPad, at: Pt, fabric: Int): SketchPad {
+        val mine = pad.activeLayer.strokes
+        val target = fillTarget(mine, at)
+        if (target != null) return editActive(pad) { list -> list.mapIndexed { i, s -> if (i == target) s.copy(fill = fabric) else s } }
+        val poly = floodFill(mine, at, pad.padW, pad.padH)
+            ?: floodFill(pad.layers.filter { it.visible }.flatMap { it.strokes }, at, pad.padW, pad.padH)
+            ?: return pad
+        val colour = FABRICS.getOrNull(fabric)?.base ?: 0xFF000000
+        val area = PadStroke(colour, 0f, poly.flatMap { listOf(it.x, it.y) }, closed = true, smooth = false, fill = fabric)
+        return editActive(pad) { listOf(area) + it }
+    }
+
+    /** Removes a layer (there is always at least one). */
+    fun deleteLayer(pad: SketchPad, index: Int): SketchPad {
+        if (pad.layers.size <= 1 || index !in pad.layers.indices) return pad
+        val layers = pad.layers.filterIndexed { j, _ -> j != index }
+        val active = when {
+            pad.activeIndex > index -> pad.activeIndex - 1
+            pad.activeIndex == index -> (index - 1).coerceAtLeast(0)
+            else -> pad.activeIndex
+        }
+        return pad.copy(layers = layers, active = active.coerceIn(0, layers.size - 1))
+    }
+
+    /** Moves a layer one step up (towards the top) or down; the active layer follows it. */
+    fun moveLayer(pad: SketchPad, index: Int, up: Boolean): SketchPad {
+        val to = if (up) index + 1 else index - 1
+        if (index !in pad.layers.indices || to !in pad.layers.indices) return pad
+        val layers = pad.layers.toMutableList().apply { add(to, removeAt(index)) }
+        val active = when (pad.activeIndex) {
+            index -> to
+            to -> index
+            else -> pad.activeIndex
+        }
+        return pad.copy(layers = layers, active = active)
+    }
+
+    // ---- Eraser ----
+
+    /**
+     * The smudge eraser: rubs out only what the eraser circle passes over, splitting lines where it
+     * cuts them. A filled shape keeps its fill when its outline is cut; a fill is rubbed out whole.
+     */
+    fun eraseArea(strokes: List<PadStroke>, path: List<Pt>, radius: Float): List<PadStroke> = strokes.flatMap { s ->
+        val pts = s.pts()
+        fun hit(p: Pt) = path.any { it.dist(p) < radius }
+        when {
+            pts.isEmpty() -> emptyList()
+            pts.size == 1 -> if (hit(pts[0])) emptyList() else listOf(s)
+            // A fill on its own (from the fill tool) has no line to cut: it goes if you rub inside it.
+            s.width <= 0f -> if (path.any { contains(pts, it) } || pts.any(::hit)) emptyList() else listOf(s)
+            else -> {
+                val ring = if (s.closed) pts + pts.first() else pts
+                val dense = densify(ring, radius / 3f)
+                if (dense.none(::hit)) {
+                    // Rubbing inside a filled shape takes the fill and leaves the line.
+                    if (s.closed && s.fill != null && path.any { contains(pts, it) }) listOf(s.copy(fill = null)) else listOf(s)
+                } else {
+                    val runs = mutableListOf<MutableList<Pt>>()
+                    var cur: MutableList<Pt>? = null
+                    for (p in dense) {
+                        if (hit(p)) cur = null else {
+                            if (cur == null) { cur = mutableListOf(); runs += cur }
+                            cur += p
+                        }
+                    }
+                    // A closed line cut once stays one piece around the seam.
+                    if (s.closed && runs.size >= 2 && !hit(dense.first()) && !hit(dense.last())) {
+                        val last = runs.removeAt(runs.lastIndex)
+                        runs[0] = (last + runs[0]).toMutableList()
+                    }
+                    val keptFill = if (s.closed && s.fill != null) listOf(s.copy(width = 0f)) else emptyList()
+                    keptFill + runs.filter { it.size >= 2 }.map { r ->
+                        s.copy(points = Geometry.rdp(r, 0.0008f).flatMap { listOf(it.x, it.y) }, closed = false, fill = null)
+                    }
+                }
+            }
+        }
+    }
+
+    private fun densify(pts: List<Pt>, step: Float): List<Pt> {
+        if (pts.size < 2 || step <= 0f) return pts
+        val out = ArrayList<Pt>()
+        for (i in 0 until pts.size - 1) {
+            val a = pts[i]
+            val b = pts[i + 1]
+            val n = kotlin.math.ceil(a.dist(b) / step).toInt().coerceAtLeast(1)
+            for (k in 0 until n) out += a + (b - a) * (k.toFloat() / n)
+        }
+        out += pts.last()
+        return out
+    }
+
+    // ---- Fill ----
+
+    /**
+     * Fills the area around [at] that the lines enclose, like a paint bucket: it works across
+     * several strokes and jumps small gaps ([gap], pad units), so a hand-drawn pocket fills even when
+     * it isn't one perfect closed line. Returns the area's outline, or null if it leaks to the edge.
+     */
+    fun floodFill(strokes: List<PadStroke>, at: Pt, padW: Float, padH: Float, gap: Float = 0.012f): List<Pt>? {
+        // About 250 cells across a page, fewer on a big pad so it stays quick.
+        var cell = 0.004f
+        while ((padW / cell) * (padH / cell) > 400_000f) cell *= 1.25f
+        val cols = kotlin.math.ceil(padW / cell).toInt() + 2
+        val rows = kotlin.math.ceil(padH / cell).toInt() + 2
+        fun cx(x: Float) = (x / cell).toInt() + 1
+        fun cy(y: Float) = (y / cell).toInt() + 1
+        val wall = BooleanArray(cols * rows)
+        val gapCells = gap / cell
+        for (s in strokes) {
+            if (s.width <= 0f) continue
+            val pts = s.pts()
+            if (pts.isEmpty()) continue
+            val r = (s.width / 360f / 2f) / cell + gapCells
+            val ri = kotlin.math.ceil(r).toInt()
+            val ring = if (s.closed && pts.size > 2) pts + pts.first() else pts
+            for (p in densify(ring, cell / 2f)) {
+                val px = cx(p.x)
+                val py = cy(p.y)
+                for (dy in -ri..ri) for (dx in -ri..ri) {
+                    if (dx * dx + dy * dy > r * r) continue
+                    val x = px + dx
+                    val y = py + dy
+                    if (x in 0 until cols && y in 0 until rows) wall[y * cols + x] = true
+                }
+            }
+        }
+        val sx = cx(at.x)
+        val sy = cy(at.y)
+        if (sx !in 1 until cols - 1 || sy !in 1 until rows - 1 || wall[sy * cols + sx]) return null
+        // Flood the open cells; touching the border means the shape isn't closed.
+        val region = BooleanArray(cols * rows)
+        val queue = IntArray(cols * rows)
+        var head = 0
+        var tail = 0
+        queue[tail++] = sy * cols + sx
+        region[sy * cols + sx] = true
+        while (head < tail) {
+            val c = queue[head++]
+            val x = c % cols
+            val y = c / cols
+            if (x <= 0 || y <= 0 || x >= cols - 1 || y >= rows - 1) return null
+            for (n in intArrayOf(c - 1, c + 1, c - cols, c + cols)) {
+                if (!region[n] && !wall[n]) { region[n] = true; queue[tail++] = n }
+            }
+        }
+        // Grow back under the lines (by the gap allowance) so the fill meets the ink.
+        val grow = kotlin.math.ceil(gapCells).toInt() + 1
+        val filled = region.copyOf()
+        for (c in 0 until cols * rows) {
+            if (!region[c]) continue
+            val x = c % cols
+            val y = c / cols
+            for (dy in -grow..grow) for (dx in -grow..grow) {
+                if (dx * dx + dy * dy > grow * grow) continue
+                val nx = x + dx
+                val ny = y + dy
+                if (nx in 1 until cols - 1 && ny in 1 until rows - 1) filled[ny * cols + nx] = true
+            }
+        }
+        val outline = traceOutline(filled, cols, rows) ?: return null
+        val poly = outline.map { (x, y) -> Pt((x - 1 + 0.5f) * cell, (y - 1 + 0.5f) * cell) }
+        val simple = Geometry.rdp(poly + poly.first(), cell * 0.75f).dropLast(1)
+        return if (simple.size >= 3) simple else null
+    }
+
+    /** The outer edge of the cells set in [mask], in order (Moore neighbour tracing). */
+    private fun traceOutline(mask: BooleanArray, cols: Int, rows: Int): List<Pair<Int, Int>>? {
+        val start = mask.indexOfFirst { it }.takeIf { it >= 0 } ?: return null
+        val dx = intArrayOf(1, 1, 0, -1, -1, -1, 0, 1)
+        val dy = intArrayOf(0, 1, 1, 1, 0, -1, -1, -1)
+        fun on(x: Int, y: Int) = x in 0 until cols && y in 0 until rows && mask[y * cols + x]
+        val sx = start % cols
+        val sy = start / cols
+        val out = ArrayList<Pair<Int, Int>>()
+        var x = sx
+        var y = sy
+        var back = 4 // came from the west, which is empty
+        val limit = cols * rows * 4
+        var steps = 0
+        var first: Pair<Int, Int>? = null
+        while (steps++ < limit) {
+            out += x to y
+            var found = -1
+            for (k in 1..8) {
+                val d = (back + k) % 8
+                if (on(x + dx[d], y + dy[d])) { found = d; break }
+            }
+            if (found < 0) break // a single cell
+            val prev = (found + 7) % 8
+            val nx = x + dx[found]
+            val ny = y + dy[found]
+            // The new backtrack points from the next cell to the last empty cell checked.
+            val bx = x + dx[prev] - nx
+            val by = y + dy[prev] - ny
+            back = (0 until 8).first { dx[it] == bx && dy[it] == by }
+            if (x == sx && y == sy) {
+                if (first == null) first = nx to ny else if (first == nx to ny) break
+            }
+            x = nx
+            y = ny
+        }
+        if (out.size > 1 && out.last() == out.first()) out.removeAt(out.lastIndex)
+        return out
+    }
 
     fun contains(poly: List<Pt>, p: Pt): Boolean {
         if (poly.size < 3) return false

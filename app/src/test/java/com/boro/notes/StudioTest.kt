@@ -6,6 +6,7 @@ import com.boro.notes.studio.CollageItem
 import com.boro.notes.studio.CollageKind
 import com.boro.notes.studio.Pad
 import com.boro.notes.studio.PadShape
+import com.boro.notes.studio.PadStroke
 import com.boro.notes.studio.SketchPad
 import com.boro.notes.studio.StudioJson
 import org.junit.Assert.assertEquals
@@ -63,8 +64,14 @@ class StudioTest {
 
     @Test
     fun contentRoundTrips() {
-        val pad = SketchPad(strokes = listOf(Pad.shape(PadShape.BOX, Pt(0f, 0f), Pt(0.5f, 0.5f), 1, 2f)!!.copy(fill = 3)), photo = "a.jpg")
+        val pad = Pad.editActive(SketchPad(photo = "a.jpg")) { listOf(Pad.shape(PadShape.BOX, Pt(0f, 0f), Pt(0.5f, 0.5f), 1, 2f)!!.copy(fill = 3)) }
         assertEquals(pad, StudioJson.pad(StudioJson.encode(pad)))
+        // A sketch saved before layers opens with its strokes on Layer 1.
+        val old = StudioJson.pad("""{"strokes":[{"color":1,"width":2.0,"points":[0.1,0.1,0.2,0.2]}],"photo":"b.jpg"}""")
+        assertEquals(1, old.layers.size)
+        assertEquals(1, old.layers[0].strokes.size)
+        assertTrue(old.legacyStrokes.isEmpty())
+        assertEquals("b.jpg", old.photo)
         val collage = Collage(listOf(CollageItem("x", CollageKind.TEXT, text = "Hem", rot = 4f)), paper = 0xFF000000)
         assertEquals(collage, StudioJson.collage(StudioJson.encode(collage)))
         assertNotNull(StudioJson.pad("not json"))
@@ -86,7 +93,7 @@ class StudioTest {
 
     @Test
     fun padGrowsAndTrims() {
-        val pad = SketchPad(strokes = listOf(com.boro.notes.studio.PadStroke(0xFF000000, 3f, listOf(0.2f, 0.3f, 0.4f, 0.5f))))
+        val pad = Pad.editActive(SketchPad()) { listOf(com.boro.notes.studio.PadStroke(0xFF000000, 3f, listOf(0.2f, 0.3f, 0.4f, 0.5f))) }
         val left = Pad.grow(pad, com.boro.notes.studio.PadSide.LEFT, 0.5f)
         assertEquals(1.5f, left.padW, 1e-5f)
         // Growing left keeps the drawing where it was on the paper by shifting it right.
@@ -98,5 +105,74 @@ class StudioTest {
         assertEquals(0.5f, trimmed.padW, 1e-5f)
         assertEquals(0.06f, trimmed.strokes[0].points[0], 1e-5f)
         assertEquals(0.06f, trimmed.strokes[0].points[1], 1e-5f)
+    }
+
+    @Test
+    fun smudgeEraserCutsOnlyWhatItTouches() {
+        val line = PadStroke(1, 2f, listOf(0f, 0.5f, 1f, 0.5f), smooth = false)
+        val out = Pad.eraseArea(listOf(line), listOf(Pt(0.5f, 0.5f)), 0.05f)
+        assertEquals(2, out.size)
+        assertTrue(out[0].points.chunked(2).all { it[0] < 0.46f })
+        assertTrue(out[1].points.chunked(2).all { it[0] > 0.54f })
+        // Missing it leaves it alone.
+        assertEquals(listOf(line), Pad.eraseArea(listOf(line), listOf(Pt(0.5f, 0.9f)), 0.05f))
+        // Cutting a filled box's outline keeps the fill.
+        val box = Pad.shape(PadShape.BOX, Pt(0.2f, 0.2f), Pt(0.6f, 0.6f), 1, 2f)!!.copy(fill = 2)
+        val cut = Pad.eraseArea(listOf(box), listOf(Pt(0.4f, 0.2f)), 0.03f)
+        assertTrue(cut.any { it.fill == 2 && it.closed && it.width == 0f })
+        assertTrue(cut.filter { it.width > 0f }.all { !it.closed && it.fill == null })
+    }
+
+    @Test
+    fun fillFindsShapesMadeOfSeveralStrokesWithSmallGaps() {
+        // A pocket drawn as three strokes, with a small gap at one corner.
+        val sides = listOf(
+            PadStroke(1, 3f, listOf(0.2f, 0.2f, 0.2f, 0.6f, 0.6f, 0.6f), smooth = false),
+            PadStroke(1, 3f, listOf(0.6f, 0.6f, 0.6f, 0.2f), smooth = false),
+            PadStroke(1, 3f, listOf(0.6f, 0.2f, 0.21f, 0.2f), smooth = false),
+        )
+        val poly = Pad.floodFill(sides, Pt(0.4f, 0.4f), 1f, 4f / 3f)
+        assertNotNull(poly)
+        val xs = poly!!.map { it.x }
+        val ys = poly.map { it.y }
+        assertTrue("fill reaches the lines", xs.min() < 0.22f && xs.max() > 0.58f && ys.min() < 0.22f && ys.max() > 0.58f)
+        assertTrue("fill stays inside", xs.min() > 0.17f && xs.max() < 0.63f)
+        assertTrue(Pad.contains(poly, Pt(0.4f, 0.4f)))
+        // Outside any shape, or with a gap too big to jump, there's nothing to fill.
+        assertNull(Pad.floodFill(sides, Pt(0.9f, 0.9f), 1f, 4f / 3f))
+        val open = listOf(PadStroke(1, 3f, listOf(0.2f, 0.2f, 0.2f, 0.6f, 0.6f, 0.6f), smooth = false))
+        assertNull(Pad.floodFill(open, Pt(0.4f, 0.4f), 1f, 4f / 3f))
+        // The fill tool puts the area under the lines, and a second tap recolours it.
+        val pad = Pad.editActive(SketchPad()) { sides }
+        val filled = Pad.fill(pad, Pt(0.4f, 0.4f), 3)
+        assertEquals(4, filled.strokes.size)
+        assertEquals(3, filled.strokes.first().fill)
+        assertEquals(0f, filled.strokes.first().width)
+        assertEquals(5, Pad.fill(filled, Pt(0.4f, 0.4f), 5).strokes.first().fill)
+        assertEquals(filled, Pad.fill(filled, Pt(0.9f, 0.9f), 3))
+    }
+
+    @Test
+    fun layersAddMoveAndDelete() {
+        var pad = SketchPad()
+        pad = Pad.editActive(pad) { listOf(PadStroke(1, 2f, listOf(0.1f, 0.1f))) }
+        pad = Pad.addLayer(pad)
+        assertEquals(2, pad.layers.size)
+        assertEquals(1, pad.active)
+        assertEquals("Layer 2", pad.activeLayer.name)
+        pad = Pad.editActive(pad) { it + PadStroke(2, 2f, listOf(0.2f, 0.2f)) }
+        assertEquals(1, pad.layers[1].strokes.size)
+        assertEquals(2, pad.strokes.size)
+        pad = Pad.moveLayer(pad, 1, up = false)
+        assertEquals("Layer 2", pad.layers[0].name)
+        assertEquals(0, pad.active)
+        pad = Pad.updateLayer(pad, 1) { it.copy(alpha = 0.25f, visible = false) }
+        assertFalse(pad.layers[1].visible)
+        pad = Pad.deleteLayer(pad, 0)
+        assertEquals(listOf("Layer 1"), pad.layers.map { it.name })
+        assertEquals(0, pad.active)
+        assertEquals(pad, Pad.deleteLayer(pad, 0))
+        // Drawing on a hidden layer shows it again.
+        assertTrue(Pad.editActive(pad) { it }.layers[0].visible)
     }
 }

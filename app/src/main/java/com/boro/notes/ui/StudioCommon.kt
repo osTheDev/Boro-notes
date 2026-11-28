@@ -187,11 +187,27 @@ fun DrawScope.drawPadStrokes(strokes: List<PadStroke>, unit: Float) {
         if (s.closed) fillFabric(padPath(s, unit), fabric, px * 1.6f)
     }
     strokes.forEach { s ->
+        if (s.width <= 0f) return@forEach // a fill on its own
         val width = (s.width * px).coerceAtLeast(1f)
         if (s.points.size == 2) {
             drawCircle(Color(s.color), width / 2, Offset(s.points[0] * unit, s.points[1] * unit))
         } else {
             drawPath(padPath(s, unit), Color(s.color), style = Stroke(width, cap = StrokeCap.Round, join = StrokeJoin.Round))
+        }
+    }
+}
+
+/** Draws each shown layer, bottom first, faded as a whole (so overlaps don't darken). */
+fun DrawScope.drawPadLayers(pad: SketchPad, unit: Float) {
+    pad.layers.forEach { layer ->
+        if (!layer.visible || layer.strokes.isEmpty()) return@forEach
+        if (layer.alpha >= 1f) {
+            drawPadStrokes(layer.strokes, unit)
+        } else {
+            val canvas = drawContext.canvas
+            canvas.saveLayer(androidx.compose.ui.geometry.Rect(Offset.Zero, size), androidx.compose.ui.graphics.Paint().apply { alpha = layer.alpha.coerceIn(0f, 1f) })
+            drawPadStrokes(layer.strokes, unit)
+            canvas.restore()
         }
     }
 }
@@ -223,7 +239,7 @@ fun PadSurface(pad: SketchPad, width: androidx.compose.ui.unit.Dp, modifier: Mod
         }
         Canvas(Modifier.matchParentSize()) {
             val unit = size.width / pad.padW
-            drawPadStrokes(pad.strokes, unit)
+            drawPadLayers(pad, unit)
             overlay(unit)
         }
     }

@@ -29,6 +29,13 @@ import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import com.boro.notes.studio.SketchPad
+import androidx.compose.material3.IconButton
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.AspectRatio
@@ -122,6 +129,7 @@ fun SketchPadScreen(draft: IdeaDraft, vm: IdeasViewModel, collections: List<Stri
     var ink by rememberSaveable { mutableStateOf(INK_COLORS[0]) }
     var penWidth by rememberSaveable { mutableStateOf(4f) }
     var eraser by rememberSaveable { mutableStateOf(ERASER_SIZES[1].second) }
+    var smudge by rememberSaveable { mutableStateOf(false) }
     var fill by rememberSaveable { mutableStateOf(0) }
     var mirror by rememberSaveable { mutableStateOf(false) }
     var straighten by rememberSaveable { mutableStateOf(false) }
@@ -143,7 +151,7 @@ fun SketchPadScreen(draft: IdeaDraft, vm: IdeasViewModel, collections: List<Stri
 
     fun commit(stroke: PadStroke?) {
         stroke ?: return
-        vm.changePad { p -> p.copy(strokes = p.strokes + stroke + if (mirror) listOf(Pad.mirror(stroke, p.padW)) else emptyList()) }
+        vm.changePad { p -> Pad.editActive(p) { it + stroke + if (mirror) listOf(Pad.mirror(stroke, p.padW)) else emptyList() } }
     }
 
     Surface(Modifier.fillMaxSize().testTag(TAG_SKETCH_PAD), color = cs.surface) {
@@ -162,7 +170,7 @@ fun SketchPadScreen(draft: IdeaDraft, vm: IdeasViewModel, collections: List<Stri
                     Modifier
                         .fillMaxSize()
                         .testTag(TAG_PAD_CANVAS)
-                        .pointerInput(tool, shape, ink, penWidth, eraser, fill, mirror, straighten, levelDeg, movingPhoto, unitPx, originX, originY, photoAspect) {
+                        .pointerInput(tool, shape, ink, penWidth, eraser, smudge, fill, mirror, straighten, levelDeg, movingPhoto, unitPx, originX, originY, photoAspect) {
                             awaitEachGesture {
                                 val down = awaitFirstDown(requireUnconsumed = false)
                                 fun local(p: Offset) = Pt((p.x - originX - pan.x) / zoom / unitPx, (p.y - originY - pan.y) / zoom / unitPx)
@@ -224,16 +232,20 @@ fun SketchPadScreen(draft: IdeaDraft, vm: IdeasViewModel, collections: List<Stri
                                     PadTool.SHAPE -> commit(Pad.shape(shape, pts.first(), pts.last(), inkFor(penWidth), penWidth, levelDeg))
                                     PadTool.FILL -> {
                                         val at = pts.last()
-                                        val target = Pad.fillTarget(p.strokes, at)
-                                        if (target != null) vm.changePad { q ->
-                                            val mirrorTarget = if (mirror) Pad.fillTarget(q.strokes, Pt(q.padW - at.x, at.y)) else null
-                                            q.copy(strokes = q.strokes.mapIndexed { i, s -> if (i == target || i == mirrorTarget) s.copy(fill = fill) else s })
+                                        vm.changePad { q ->
+                                            val once = Pad.fill(q, at, fill)
+                                            if (mirror) Pad.fill(once, Pt(q.padW - at.x, at.y), fill) else once
                                         }
                                     }
                                     PadTool.ERASE -> {
                                         val path = if (mirror) pts + pts.map { Pt(p.padW - it.x, it.y) } else pts
-                                        val hit = Pad.touched(p.strokes, path, eraser / zoom)
-                                        if (hit.isNotEmpty()) vm.changePad { q -> q.copy(strokes = q.strokes.filterIndexed { i, _ -> i !in hit }) }
+                                        val radius = eraser / zoom
+                                        vm.changePad { q ->
+                                            Pad.editActive(q) { strokes ->
+                                                if (smudge) Pad.eraseArea(strokes, path, radius)
+                                                else Pad.touched(strokes, path, radius).let { hit -> strokes.filterIndexed { i, _ -> i !in hit } }
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -316,14 +328,30 @@ fun SketchPadScreen(draft: IdeaDraft, vm: IdeasViewModel, collections: List<Stri
                         Icons.Filled.FormatColorFill, "Fabric fill", "pad-fill", selected = tool == PadTool.FILL,
                         accent = Color(FABRICS[fill].base), onSelect = { tool = PadTool.FILL; movingPhoto = false },
                     ) { close ->
-                        PopupSection("Fabric · then tap inside a closed shape") { FabricDots(fill) { fill = it; close() } }
+                        PopupSection("Fabric · then tap inside a shape") { FabricDots(fill) { fill = it; close() } }
+                        Text(
+                            "Fills what your lines enclose, even across several strokes or a small gap. Tap again to change the fabric.",
+                            style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                        )
                     }
                     ToolPopup(Icons.Filled.AutoFixNormal, "Eraser", "pad-erase", selected = tool == PadTool.ERASE, onSelect = { tool = PadTool.ERASE; movingPhoto = false }) { _ ->
+                        PopupSection("Rubs out") {
+                            ChoiceChips(listOf("Whole line", "Smudge"), if (smudge) 1 else 0, "pad-erase-mode") { smudge = it == 1 }
+                        }
+                        Text(
+                            if (smudge) "Only what the circle passes over, like a real eraser" else "Any line the circle touches",
+                            style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 16.dp),
+                        )
                         PopupSection("Size") { SizeDots(ERASER_SIZES.map { it.first to it.second * 500f }, eraser * 500f, cs.error, "pad-eraser") { eraser = it / 500f } }
                     }
                 }
-                // The page: the photo to trace, and the canvas size.
+                // The page: layers, the photo to trace, and the canvas size.
                 ToolGroup(cs.tertiaryContainer, cs.onTertiaryContainer) {
+                    ToolPopup(Icons.Filled.Layers, "Layers", "pad-layers", accent = if (pad.layers.size > 1) cs.primary else null) { _ ->
+                        LayersPanel(pad, vm)
+                    }
                     ToolPopup(Icons.Filled.Image, "Trace photo", "pad-photo", accent = if (pad.photo != null) cs.primary else null) { close ->
                         ActionRow(Icons.Filled.PhotoCamera, if (pad.photo == null) "Take a photo" else "Retake photo", "pad-photo-camera") { close(); photos.camera() }
                         ActionRow(Icons.Filled.PhotoLibrary, "From gallery", "pad-photo-gallery") { close(); photos.gallery() }
@@ -370,6 +398,64 @@ fun SketchPadScreen(draft: IdeaDraft, vm: IdeasViewModel, collections: List<Stri
             }
         }
     }
+}
+
+private val LAYER_FADES = listOf("Faint" to 0.25f, "Half" to 0.45f, "Strong" to 0.75f, "Full" to 1f)
+
+/** The layers, top first: tap one to draw on it, the eye shows or hides it; the photo sits at the bottom. */
+@Composable
+private fun LayersPanel(pad: SketchPad, vm: IdeasViewModel) {
+    val cs = MaterialTheme.colorScheme
+    val active = pad.activeIndex
+    Column(Modifier.padding(horizontal = 8.dp)) {
+        for (i in pad.layers.indices.reversed()) {
+            val layer = pad.layers[i]
+            val on = i == active
+            Row(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
+                    .background(if (on) cs.primaryContainer else Color.Transparent)
+                    .clickable { vm.changePad { it.copy(active = i) } }
+                    .padding(start = 10.dp)
+                    .testTag("pad-layer-$i"),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f).padding(vertical = 6.dp)) {
+                    Text(layer.name, style = MaterialTheme.typography.bodyMedium, color = if (on) cs.onPrimaryContainer else cs.onSurface)
+                    Text(
+                        listOfNotNull(
+                            if (on) "Drawing here" else null,
+                            "${layer.strokes.size} mark${if (layer.strokes.size == 1) "" else "s"}",
+                            if (layer.alpha < 1f) "${(layer.alpha * 100).roundToInt()}%" else null,
+                        ).joinToString(" · "),
+                        style = MaterialTheme.typography.labelSmall, color = cs.onSurfaceVariant,
+                    )
+                }
+                IconButton(onClick = { vm.changePad { p -> Pad.updateLayer(p, i) { it.copy(visible = !it.visible) } } }, modifier = Modifier.testTag("pad-layer-eye-$i")) {
+                    Icon(if (layer.visible) Icons.Filled.Visibility else Icons.Filled.VisibilityOff, if (layer.visible) "Hide ${layer.name}" else "Show ${layer.name}")
+                }
+            }
+        }
+        if (pad.photo != null) {
+            Row(Modifier.fillMaxWidth().padding(start = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Filled.Image, null, tint = cs.onSurfaceVariant, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Trace photo", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                IconButton(onClick = { vm.changePad { it.copy(showPhoto = !it.showPhoto) } }, modifier = Modifier.testTag("pad-layer-photo-eye")) {
+                    Icon(if (pad.showPhoto) Icons.Filled.Visibility else Icons.Filled.VisibilityOff, if (pad.showPhoto) "Hide photo" else "Show photo")
+                }
+            }
+        }
+    }
+    PopupSection("Fade · ${pad.activeLayer.name}") {
+        ChoiceChips(LAYER_FADES.map { it.first }, LAYER_FADES.indexOfFirst { it.second == pad.activeLayer.alpha }, "pad-layer-fade") { f ->
+            vm.changePad { p -> Pad.updateLayer(p, active) { it.copy(alpha = LAYER_FADES[f].second, visible = true) } }
+        }
+    }
+    HorizontalDivider(Modifier.padding(vertical = 4.dp))
+    ActionRow(Icons.Filled.Add, "New layer", "pad-layer-add") { vm.changePad { Pad.addLayer(it) } }
+    ActionRow(Icons.Filled.ArrowUpward, "Move up", "pad-layer-up", enabled = active < pad.layers.size - 1) { vm.changePad { Pad.moveLayer(it, active, up = true) } }
+    ActionRow(Icons.Filled.ArrowDownward, "Move down", "pad-layer-down", enabled = active > 0) { vm.changePad { Pad.moveLayer(it, active, up = false) } }
+    ActionRow(Icons.Filled.Delete, "Delete ${pad.activeLayer.name}", "pad-layer-delete", enabled = pad.layers.size > 1) { vm.changePad { Pad.deleteLayer(it, active) } }
 }
 
 /** A small pill button over the canvas. */
